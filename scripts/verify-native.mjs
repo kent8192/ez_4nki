@@ -34,6 +34,11 @@ let session;
 let applicationProcess;
 let applicationLog = '';
 let windowsDebugPolicyCreated = false;
+let windowsNetworkObservationStarted = false;
+
+function windowsNetworkObservation(mode) {
+  execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-File', 'scripts/windows-test-network.ps1', '-Mode', mode, '-StateDirectory', temporary, '-Destination', artifacts], { env, stdio: 'inherit', timeout: 30000 });
+}
 
 function stopWindowsProcess(child) {
   if (!child) return;
@@ -156,6 +161,10 @@ async function closeSession() {
 
 try {
   await until(() => request('GET', '/status'), 'native driver startup');
+  if (windows) {
+    windowsNetworkObservation('start');
+    windowsNetworkObservationStarted = true;
+  }
   await openSession();
   await clickButton('学習をはじめる');
   await bodyContains('What is 2 + 3?');
@@ -230,8 +239,12 @@ try {
   driver.unref();
   writeFileSync(join(artifacts, 'driver.log'), driverLog);
   if (windows) writeFileSync(join(artifacts, 'application.log'), applicationLog);
-  if (windowsDebugPolicyCreated) {
-    execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-File', 'scripts/windows-test-debug-policy.ps1', '-Mode', 'remove'], { env, stdio: 'inherit', timeout: 10000 });
+  try {
+    if (windowsDebugPolicyCreated) {
+      execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-File', 'scripts/windows-test-debug-policy.ps1', '-Mode', 'remove'], { env, stdio: 'inherit', timeout: 10000 });
+    }
+  } finally {
+    if (windowsNetworkObservationStarted) windowsNetworkObservation('finish');
   }
 }
 
