@@ -86,8 +86,14 @@ cargo run --locked -p kotoba-core --example portability_fixture -- check synthet
 
 ## 配布物とネイティブ画面のCI
 
-`packages.yml`を手動実行すると、3 OSの配布物とSHA256・ビルド情報をprivateリポジトリのActions成果物へ保存する。公開リリースや自動更新は行わない。Windows・Ubuntuでは作成したパッケージをランナーにインストールし、`tauri-driver`から実際の画面を操作する。
+`packages.yml`を手動実行すると、3 OSの配布物とSHA256・ビルド情報をprivateリポジトリのActions成果物へ保存する。公開リリースや自動更新は行わない。Windows・Ubuntuでは作成したパッケージをランナーにインストールし、Windowsでは同梱ランタイムと同じ版のMicrosoft Edge WebDriver、Ubuntuでは`tauri-driver`とWebKitWebDriverから実際の画面を操作する。Windowsのセッションでは起動したWebView2の版も照合し、起動に失敗した場合はドライバーの詳細ログを保存する。
+
+`native-windows.yml`では既存のパッケージ実行IDを指定し、保存済みインストーラのSHA256を照合して画面検証だけを実行できる。証跡にはインストーラを作成したコミットとハッシュを含める。検証スクリプト側のコミットと製品バイナリ側のコミットが異なる場合、その違いを検証結果に明記する。
+
+Windowsの画面検証では、使い捨てCI VMの当該アプリに限ってループバックのデバッグ接続を有効にし、[Microsoftのattach方式](https://learn.microsoft.com/en-us/microsoft-edge/webview2/how-to/webdriver#step-4b-attaching-microsoft-edge-webdriver-to-a-running-webview2-app)を使う。ホステッドランナーは管理者権限で動作するため、[WebView2の管理者プロセス向け仕様](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security#for-an-elevated-host-app-use-appropriate-override-flags)に従いHKLMのアプリ専用値を使う。権限と値の読み戻しを確認し、既存値があると拒否し、終了時に自分が作成した値だけを削除する。製品の設定ファイルへデバッグ用ポートは追加しない。
 
 ネイティブ画面検証は、回答を隠す表示、プレーンテキスト、評価と取り消し、当日上乗せ、30日予測、忘却曲線、再起動後の保存を対象とする。`native_fixture`はCIの新しいデータ領域へ架空の2枚を用意し、既存ディレクトリがあると拒否する。製品に検証用のデータ注入コマンドは追加していない。OSのファイルダイアログを通じたCSV取り込み・バックアップ操作は、この自動検証の対象外。
 
-Ubuntuでは`strace`でドライバーと子プロセスのネットワーク呼び出しを記録する。観測範囲はCIの操作とプロセスツリーに限る。実利用端末の補助サービスや、Windows・macOSでの全操作の通信観測も完成条件に含める。CIでのアプリ操作用通信はループバックのみで、配布アプリがWebDriverを起動することはない。
+Ubuntuでは`strace`でドライバーと子プロセスのネットワーク呼び出しを記録する。Windowsでは使い捨てCI VMでWFP接続監査を有効にし、インストール先のアプリと同梱ランタイムに一致する接続メタデータだけを記録する。観測後は監査設定を元へ戻し、Securityログ全体やパケット本文は成果物へ含めない。証跡が空の場合は成功扱いにしない。
+
+観測範囲はCIの操作と対象プロセスに限る。実利用端末の補助サービスや、3 OSでの全操作の通信観測も完成条件に含める。CIでのアプリ操作用通信はループバックのみで、配布アプリがWebDriverを起動することはない。

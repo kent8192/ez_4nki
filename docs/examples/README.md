@@ -8,4 +8,4 @@
 | [updated.csv](updated.csv) | 列の順番が変わったCSVを再取り込み。ID 001は更新して履歴保持、003は変更なし、004は追加。CSVから消えた002は保持 |
 | [ambiguous.csv](ambiguous.csv) | ID 001が重複している。曖昧さを表示し、自動更新しない |
 
-initial.csvの取り込み後に架空の学習履歴を付け、updated.csvの適用後もID 001の履歴が維持されることを確認する。アプリはまだ実装されておらず、このファイル自体が動作検証の成功を示すものではない。
+initial.csvの取り込み後に架空の学習履歴を付け、updated.csvの適用後もID 001の履歴が維持されることを確認する。macOSアプリでの実行結果と、他OSを含む検証状況は[実装と検証の進捗](../implementation-status.md)を参照。
