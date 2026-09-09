@@ -25,7 +25,7 @@ const driverArgs = ['--port', '4444', '--native-port', '4445'];
 if (windows) driverArgs.push('--native-driver', resolve('src-tauri/runtime/driver/msedgedriver.exe'));
 const driver = windows
   ? spawn('tauri-driver.exe', driverArgs, { env, stdio: ['ignore', 'pipe', 'pipe'] })
-  : spawn('strace', ['--kill-on-exit', '-f', '-s', '1', '-e', 'trace=network', '-o', join(artifacts, 'network-linux.log'), 'tauri-driver', ...driverArgs], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  : spawn('strace', ['--kill-on-exit', '-f', '-s', '1', '-e', 'trace=network', '-o', join(artifacts, 'network-linux.log'), 'tauri-driver', ...driverArgs], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let driverLog = '';
 driver.stdout.on('data', (data) => { driverLog += data; });
 driver.stderr.on('data', (data) => { driverLog += data; });
@@ -138,12 +138,26 @@ try {
   throw error;
 } finally {
   try { await closeSession(); } catch {}
-  if (windows && driver.pid) {
+  if (windows && driver.pid && driver.exitCode === null) {
     execFileSync('taskkill', ['/PID', String(driver.pid), '/T', '/F'], { stdio: 'ignore' });
-  } else {
-    driver.kill('SIGTERM');
+  } else if (!windows && driver.pid) {
+    try { process.kill(-driver.pid, 'SIGTERM'); } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+    }
   }
-  await Promise.race([new Promise((done) => driver.once('exit', done)), delay(3000)]);
+  if (driver.exitCode === null) {
+    await Promise.race([new Promise((done) => driver.once('exit', done)), delay(3000)]);
+  }
+  if (!windows && driver.pid) {
+    try { process.kill(-driver.pid, 'SIGKILL'); } catch (error) {
+      if (error.code !== 'ESRCH') throw error;
+    }
+  }
+  // Native helpers may retain inherited pipe handles after the driver exits.
+  // The test has already closed its session; release those handles explicitly.
+  driver.stdout.destroy();
+  driver.stderr.destroy();
+  driver.unref();
   writeFileSync(join(artifacts, 'driver.log'), driverLog);
 }
 
