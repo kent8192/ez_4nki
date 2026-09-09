@@ -33,6 +33,7 @@ driver.on('error', (error) => { driverLog += error.message; });
 let session;
 let applicationProcess;
 let applicationLog = '';
+let windowsDebugPolicyCreated = false;
 
 function stopWindowsProcess(child) {
   if (!child) return;
@@ -99,12 +100,14 @@ async function openSession() {
     // Attach to an explicit loopback port: the driver's launch mode cannot
     // discover DevToolsActivePort with this installed WebView2 application.
     // These arguments exist only in the isolated CI process environment.
+    if (!windowsDebugPolicyCreated) {
+      execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-File', 'scripts/windows-test-debug-policy.ps1', '-Mode', 'create'], { env, stdio: 'inherit', timeout: 10000 });
+      windowsDebugPolicyCreated = true;
+    }
+    const applicationEnv = Object.fromEntries(Object.entries(env).filter(([key]) => key.toUpperCase() !== 'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS'));
+    applicationEnv.WEBVIEW2_USER_DATA_FOLDER = join(temporary, 'webview-profile');
     applicationProcess = spawn(application, [], {
-      env: {
-        ...env,
-        WEBVIEW2_USER_DATA_FOLDER: join(temporary, 'webview-profile'),
-        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --enable-logging --log-file="${join(artifacts, 'webview2.log')}"`,
-      },
+      env: applicationEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     applicationProcess.stdout.on('data', (data) => { applicationLog += data; });
@@ -226,6 +229,9 @@ try {
   driver.unref();
   writeFileSync(join(artifacts, 'driver.log'), driverLog);
   if (windows) writeFileSync(join(artifacts, 'application.log'), applicationLog);
+  if (windowsDebugPolicyCreated) {
+    execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-File', 'scripts/windows-test-debug-policy.ps1', '-Mode', 'remove'], { env, stdio: 'inherit', timeout: 10000 });
+  }
 }
 
 if (!windows) {
