@@ -143,6 +143,7 @@ async function closeSession() {
   } finally {
     session = undefined;
     if (windows) {
+      applicationLog += 'Stopping the CI application process after its session.\n';
       stopWindowsProcess(applicationProcess);
       applicationProcess = undefined;
     }
@@ -189,6 +190,13 @@ try {
   fixture('check');
   console.log(`Installed native UI passed on ${process.platform}: reveal, literal text, grade, undo, bonus, forecast, forgetting curve, restart persistence.`);
 } catch (error) {
+  if (windows && applicationProcess?.pid) {
+    try {
+      execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-File', 'scripts/capture-native-windows.ps1', '-ApplicationProcessId', String(applicationProcess.pid), '-Destination', artifacts], { env, stdio: 'pipe', timeout: 25000 });
+    } catch (diagnosticError) {
+      applicationLog += `Native diagnostics: ${diagnosticError.message}\n`;
+    }
+  }
   if (session) {
     try { await screenshot('failure'); } catch {}
     try { writeFileSync(join(artifacts, 'failure.html'), await request('GET', route('/source'))); } catch {}
