@@ -6,7 +6,7 @@ $applicationName = 'kotoba-desktop.exe'
 if ($Mode -eq 'create') {
     $existing = Get-ItemProperty -Path $key -Name $applicationName -ErrorAction SilentlyContinue
     if ($null -ne $existing) { throw 'Refusing to overwrite an existing application policy.' }
-    New-Item -Path $key -Force | Out-Null
+    if (!(Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
     New-ItemProperty -Path $key -Name $applicationName -PropertyType String -Value '--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1' | Out-Null
     Write-Output 'Created an application-specific loopback debugging policy for the isolated CI run.'
 } else {

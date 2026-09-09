@@ -99,7 +99,8 @@ async function openSession() {
   if (windows) {
     // Attach to an explicit loopback port: the driver's launch mode cannot
     // discover DevToolsActivePort with this installed WebView2 application.
-    // These arguments exist only in the isolated CI process environment.
+    // The application-specific policy exists only in the isolated CI account
+    // and is removed after the test. No product configuration is modified.
     if (!windowsDebugPolicyCreated) {
       execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-File', 'scripts/windows-test-debug-policy.ps1', '-Mode', 'create'], { env, stdio: 'inherit', timeout: 10000 });
       windowsDebugPolicyCreated = true;
