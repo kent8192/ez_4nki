@@ -11,6 +11,7 @@ const windows = process.platform === 'win32';
 const temporary = mkdtempSync(join(tmpdir(), 'kotoba-native-'));
 const env = { ...process.env };
 if (!windows) env.XDG_DATA_HOME = join(temporary, 'data');
+if (windows) env.TAURI_WEBVIEW_AUTOMATION = 'true';
 const dataRoot = windows ? env.LOCALAPPDATA : env.XDG_DATA_HOME;
 assert(dataRoot);
 const directory = join(dataRoot, 'local.kotoba.desktop');
@@ -22,9 +23,8 @@ assert(application && existsSync(application), 'Specify the installed applicatio
 const artifacts = resolve('artifacts/native');
 mkdirSync(artifacts, { recursive: true });
 const driverArgs = ['--port', '4444', '--native-port', '4445'];
-if (windows) driverArgs.push('--native-driver', resolve('src-tauri/runtime/driver/msedgedriver.exe'));
 const driver = windows
-  ? spawn('tauri-driver.exe', driverArgs, { env, stdio: ['ignore', 'pipe', 'pipe'] })
+  ? spawn(resolve('src-tauri/runtime/driver/msedgedriver.exe'), ['--port=4444', '--verbose', `--log-path=${join(artifacts, 'msedgedriver.log')}`], { env, stdio: ['ignore', 'pipe', 'pipe'] })
   : spawn('strace', ['--kill-on-exit', '-f', '-s', '1', '-e', 'trace=network', '-o', join(artifacts, 'network-linux.log'), 'tauri-driver', ...driverArgs], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
 let driverLog = '';
 driver.stdout.on('data', (data) => { driverLog += data; });
@@ -32,16 +32,20 @@ driver.stderr.on('data', (data) => { driverLog += data; });
 driver.on('error', (error) => { driverLog += error.message; });
 let session;
 
-async function request(method, path, body) {
-  const response = await fetch(`http://127.0.0.1:4444${path}`, {
-    method,
-    headers: { 'content-type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(45000),
-  });
-  const result = await response.json();
-  if (!response.ok || result.value?.error) throw new Error(JSON.stringify(result));
-  return result.value;
+async function request(method, path, body, timeout = 45000) {
+  try {
+    const response = await fetch(`http://127.0.0.1:4444${path}`, {
+      method,
+      headers: { 'content-type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(timeout),
+    });
+    const result = await response.json();
+    if (!response.ok || result.value?.error) throw new Error(JSON.stringify(result));
+    return result.value;
+  } catch (error) {
+    throw new Error(`${method} ${path}: ${error.message}`, { cause: error });
+  }
 }
 async function until(operation, description, timeout = 20000) {
   const deadline = Date.now() + timeout;
@@ -75,9 +79,17 @@ const fill = async (selector, value) => {
 const bodyContains = (value) => until(async () => (await text(await element('body'))).includes(value), value);
 const screenshot = async (name) => writeFileSync(join(artifacts, `${name}.png`), Buffer.from(await request('GET', route('/screenshot')), 'base64'));
 async function openSession() {
-  const result = await request('POST', '/session', { capabilities: { alwaysMatch: { 'tauri:options': { application } } } });
+  const capabilities = windows
+    ? { browserName: 'webview2', 'ms:edgeChromium': true, 'ms:edgeOptions': { binary: application } }
+    : { 'tauri:options': { application } };
+  const result = await request('POST', '/session', { capabilities: { alwaysMatch: capabilities } }, 120000);
   session = result.sessionId;
   assert(session);
+  if (windows) {
+    const runtime = JSON.parse(readFileSync('scripts/webview2-runtime.json', 'utf8'));
+    assert.equal(result.capabilities.browserVersion, runtime.version);
+    writeFileSync(join(artifacts, 'webview2-capabilities.json'), JSON.stringify(result.capabilities, null, 2));
+  }
   await bodyContains('Synthetic native verification');
   await until(() => request('POST', route('/execute/sync'), {
     script: 'return Array.from(document.fonts).some(font => font.family.includes("Kotoba Noto Sans JP") && font.status === "loaded");',

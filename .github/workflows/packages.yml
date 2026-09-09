@@ -67,7 +67,7 @@ jobs:
           if (!(Test-Path (Join-Path $installRoot 'runtime/webview2/msedgewebview2.exe'))) { throw 'Bundled Fixed Version runtime is missing.' }
           "KOTOBA_TEST_APPLICATION=$application" >> $env:GITHUB_ENV
       - name: Install native automation driver
-        if: runner.os != 'macOS'
+        if: runner.os == 'Linux'
         run: cargo install tauri-driver --version 2.0.6 --locked
       - name: Exercise installed Ubuntu app and observe network calls
         if: runner.os == 'Linux'
@@ -77,6 +77,13 @@ jobs:
         if: runner.os == 'Windows'
         timeout-minutes: 8
         run: node scripts/verify-native.mjs
+      - name: Windows application failure diagnostics
+        if: failure() && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-15)} -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -match 'kotoba-desktop|msedgewebview2' } |
+            Select-Object TimeCreated, ProviderName, Id, Message | Format-List
       - name: Upload private package and synthetic test evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
