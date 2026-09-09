@@ -1,0 +1,13 @@
+# syntax=docker/dockerfile:1
+FROM kotoba-verify:ubuntu24-x64 AS verify
+COPY . /work
+COPY --from=fixtures macos.age /tmp/macos.age
+RUN npm ci && npm run build && cargo test --locked --workspace --no-run
+RUN --network=none npm test && cargo test --locked --offline --workspace && \
+    cargo clippy --locked --offline --workspace --all-targets -- -D warnings && \
+    cargo run --locked --offline -p kotoba-core --example portability_fixture -- check /tmp/macos.age && \
+    cargo run --locked --offline -p kotoba-core --example portability_fixture -- create /work/linux.age && \
+    npm run tauri -- build --debug --bundles deb
+FROM scratch
+COPY --from=verify /work/linux.age /
+COPY --from=verify /work/target/debug/bundle/deb/*.deb /
