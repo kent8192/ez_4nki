@@ -31,6 +31,22 @@ driver.stdout.on('data', (data) => { driverLog += data; });
 driver.stderr.on('data', (data) => { driverLog += data; });
 driver.on('error', (error) => { driverLog += error.message; });
 let session;
+let applicationProcess;
+let applicationLog = '';
+
+function stopWindowsProcess(child) {
+  if (!child) return;
+  if (child.pid && child.exitCode === null) {
+    try {
+      execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore', timeout: 10000 });
+    } catch (error) {
+      applicationLog += `Process cleanup: ${error.message}\n`;
+    }
+  }
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.unref();
+}
 
 async function request(method, path, body, timeout = 45000) {
   try {
@@ -79,8 +95,33 @@ const fill = async (selector, value) => {
 const bodyContains = (value) => until(async () => (await text(await element('body'))).includes(value), value);
 const screenshot = async (name) => writeFileSync(join(artifacts, `${name}.png`), Buffer.from(await request('GET', route('/screenshot')), 'base64'));
 async function openSession() {
+  if (windows) {
+    // Attach to an explicit loopback port: the driver's launch mode cannot
+    // discover DevToolsActivePort with this installed WebView2 application.
+    // These arguments exist only in the isolated CI process environment.
+    applicationProcess = spawn(application, [], {
+      env: {
+        ...env,
+        WEBVIEW2_USER_DATA_FOLDER: join(temporary, 'webview-profile'),
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --enable-logging --log-file="${join(artifacts, 'webview2.log')}"`,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    applicationProcess.stdout.on('data', (data) => { applicationLog += data; });
+    applicationProcess.stderr.on('data', (data) => { applicationLog += data; });
+    applicationProcess.on('error', (error) => { applicationLog += `${error.message}\n`; });
+    applicationProcess.on('exit', (code, signal) => { applicationLog += `Application exited: code=${code}, signal=${signal}\n`; });
+    await until(async () => {
+      assert.equal(applicationProcess.exitCode, null, `Application exited before exposing its WebView2: ${applicationLog}`);
+      const response = await fetch('http://127.0.0.1:9222/json/version', { signal: AbortSignal.timeout(2000) });
+      if (!response.ok) return false;
+      const version = await response.json();
+      writeFileSync(join(artifacts, 'webview2-debug-version.json'), JSON.stringify(version, null, 2));
+      return true;
+    }, 'installed application WebView2 startup');
+  }
   const capabilities = windows
-    ? { browserName: 'webview2', 'ms:edgeChromium': true, 'ms:edgeOptions': { binary: application } }
+    ? { browserName: 'webview2', 'ms:edgeChromium': true, 'ms:edgeOptions': { debuggerAddress: '127.0.0.1:9222' } }
     : { 'tauri:options': { application } };
   const result = await request('POST', '/session', { capabilities: { alwaysMatch: capabilities } }, 120000);
   session = result.sessionId;
@@ -97,9 +138,14 @@ async function openSession() {
   }), 'bundled Japanese font');
 }
 async function closeSession() {
-  if (session) {
-    await request('DELETE', route(''));
+  try {
+    if (session) await request('DELETE', route(''));
+  } finally {
     session = undefined;
+    if (windows) {
+      stopWindowsProcess(applicationProcess);
+      applicationProcess = undefined;
+    }
   }
 }
 
@@ -150,8 +196,8 @@ try {
   throw error;
 } finally {
   try { await closeSession(); } catch {}
-  if (windows && driver.pid && driver.exitCode === null) {
-    execFileSync('taskkill', ['/PID', String(driver.pid), '/T', '/F'], { stdio: 'ignore' });
+  if (windows) {
+    stopWindowsProcess(driver);
   } else if (!windows && driver.pid) {
     try { process.kill(-driver.pid, 'SIGTERM'); } catch (error) {
       if (error.code !== 'ESRCH') throw error;
@@ -171,6 +217,7 @@ try {
   driver.stderr.destroy();
   driver.unref();
   writeFileSync(join(artifacts, 'driver.log'), driverLog);
+  if (windows) writeFileSync(join(artifacts, 'application.log'), applicationLog);
 }
 
 if (!windows) {
