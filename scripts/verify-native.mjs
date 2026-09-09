@@ -79,6 +79,10 @@ async function openSession() {
   session = result.sessionId;
   assert(session);
   await bodyContains('Synthetic native verification');
+  await until(() => request('POST', route('/execute/sync'), {
+    script: 'return Array.from(document.fonts).some(font => font.family.includes("Kotoba Noto Sans JP") && font.status === "loaded");',
+    args: [],
+  }), 'bundled Japanese font');
 }
 async function closeSession() {
   if (session) {

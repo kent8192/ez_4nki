@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import { basename, join, resolve } from 'node:path';
 
 const artifacts = resolve('artifacts');
@@ -27,6 +28,11 @@ writeFileSync(join(artifacts, 'build-info.json'), JSON.stringify({
   commit: process.env.GITHUB_SHA ?? execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   platform: process.platform,
   architecture: process.arch,
+  operatingSystem: os.version(),
+  kernel: os.release(),
+  webkitGtk: process.platform === 'linux'
+    ? execFileSync('dpkg-query', ['-W', '-f=${Version}', 'libwebkit2gtk-4.1-0'], { encoding: 'utf8' })
+    : null,
   webview2: process.platform === 'win32' ? { version: runtime.version, sha256: runtime.sha256 } : null,
   distributionSigning: 'Developer distribution signing and notarization have not been performed.',
 }, null, 2) + '\n');
