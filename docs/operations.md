@@ -43,10 +43,11 @@ npm run package:macos
 
 ## Windows 11・x86_64
 
-MSVCのC++ビルドツール、Node.js 24、Rust 1.96.0を用意する。Microsoftの公式配布からx64用の**Fixed Version WebView2 Runtime**を入手し、`msedgewebview2.exe`が`src-tauri/runtime/webview2`直下にある構成で展開する。展開時は`expand`を使い、配布物の版とハッシュを検証記録に残す。[Tauriの設定手順](https://v2.tauri.app/distribute/windows-installer/#fixed-version)、[Microsoftの配布手順](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution#the-fixed-version-runtime-distribution-mode)。
+MSVCのC++ビルドツール、Node.js 24、Rust 1.96.0を用意する。`prepare-webview2.ps1`は、Microsoftの公式配布からx64用の**Fixed Version WebView2 Runtime 152.0.4191.62**を取得し、SHA256・Microsoftの署名・実行ファイルの版を照合してから`src-tauri/runtime/webview2`へ展開する。取得先とSHA256は[`webview2-runtime.json`](../scripts/webview2-runtime.json)で固定している。アプリ利用時のダウンロード処理ではない。[Tauriの設定手順](https://v2.tauri.app/distribute/windows-installer/#fixed-version)、[Microsoftの配布手順](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/distribution#the-fixed-version-runtime-distribution-mode)。
 
 ```powershell
 npm ci
+./scripts/prepare-webview2.ps1
 npm test
 npm run build
 cargo test --locked --workspace
@@ -56,7 +57,7 @@ if (!(Test-Path .\src-tauri\runtime\webview2\msedgewebview2.exe)) {
 npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis
 ```
 
-Windows用設定は`tauri.windows.conf.json`で自動適用される。ランタイムの取得は開発時の手動操作であり、アプリの初回起動時にダウンロードする構成ではない。Fixed Versionの更新もアプリと一緒に手動配布する。署名用の資格情報はソースへ含めない。
+Windows用設定は`tauri.windows.conf.json`で自動適用される。Fixed Versionの更新もアプリと一緒に手動配布する。更新時は公式配布物の版・ハッシュを変更し、既存の`src-tauri/runtime/webview2`を別名へ移してから取得スクリプトを再実行する。既存ディレクトリは自動上書きしない。署名用の資格情報はソースへ含めない。
 
 ## Ubuntu 24.04 LTS・x86_64（暫定）
 
@@ -74,7 +75,7 @@ npm run tauri -- build --bundles deb
 
 ## 合成バックアップの相互復元
 
-CIの`verify.yml`は各OSでコアとUIのテストを実行し、各OSが作った合成バックアップを残りのOSで復号・SQLite復元・再起動検証する。GitHub上ではまだ実行していない。WindowsのホステッドランナーはWindows Serverであり、Windows 11の実機確認を代替しない。
+CIの`verify.yml`は各OSでコアとUIのテストを実行し、各OSが作った合成バックアップを残りのOSで復号・SQLite復元・再起動検証する。[実行結果](https://github.com/kent8192/ez_4nki/actions/workflows/verify.yml)を確認する。WindowsのホステッドランナーはWindows Serverであり、Windows 11の実機確認を代替しない。
 
 ```sh
 cargo run --locked -p kotoba-core --example portability_fixture -- create synthetic.age
@@ -82,3 +83,11 @@ cargo run --locked -p kotoba-core --example portability_fixture -- check synthet
 ```
 
 この検証用プログラムは固定の架空データのみを作る。パスフレーズは公開の固定値であり、実データに使わない。通常アプリに検証用の平文エクスポート口やデバッグ用データ注入機能は設けていない。
+
+## 配布物とネイティブ画面のCI
+
+`packages.yml`を手動実行すると、3 OSの配布物とSHA256・ビルド情報をprivateリポジトリのActions成果物へ保存する。公開リリースや自動更新は行わない。Windows・Ubuntuでは作成したパッケージをランナーにインストールし、`tauri-driver`から実際の画面を操作する。
+
+ネイティブ画面検証は、回答を隠す表示、プレーンテキスト、評価と取り消し、当日上乗せ、30日予測、忘却曲線、再起動後の保存を対象とする。`native_fixture`はCIの新しいデータ領域へ架空の2枚を用意し、既存ディレクトリがあると拒否する。製品に検証用のデータ注入コマンドは追加していない。OSのファイルダイアログを通じたCSV取り込み・バックアップ操作は、この自動検証の対象外。
+
+Ubuntuでは`strace`でドライバーと子プロセスのネットワーク呼び出しを記録する。観測範囲はCIの操作とプロセスツリーに限る。実利用端末の補助サービスや、Windows・macOSでの全操作の通信観測も完成条件に含める。CIでのアプリ操作用通信はループバックのみで、配布アプリがWebDriverを起動することはない。

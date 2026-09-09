@@ -36,6 +36,10 @@ jobs:
       - run: npm run format:check
       - run: npm run build
       - run: cargo fmt --all --check
+      - name: Prepare pinned Windows runtime
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/prepare-webview2.ps1
       - run: cargo test --locked --workspace
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - name: Create synthetic portable backup
