@@ -9,7 +9,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-2025, macos-15]
+        include:
+          - os: ubuntu-24.04
+            artifact: Linux
+          - os: windows-2025
+            artifact: Windows
+          - os: macos-15
+            artifact: macOS-arm64
+          - os: macos-15-intel
+            artifact: macOS-x64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 55
     steps:
@@ -35,10 +43,15 @@ jobs:
         run: ./scripts/prepare-webview2.ps1 -WithDriver
       - name: Build macOS APP and DMG
         if: runner.os == 'macOS'
+        env:
+          APPLE_SIGNING_IDENTITY: '-'
         run: npm run package:macos
-      - name: Validate DMG
+      - name: Validate macOS bundle signature, architecture, and DMG
         if: runner.os == 'macOS'
-        run: hdiutil verify artifacts/*.dmg
+        run: |
+          codesign --verify --deep --strict artifacts/Kotoba.app
+          lipo -verify_arch "$(uname -m)" artifacts/Kotoba.app/Contents/MacOS/kotoba-desktop
+          hdiutil verify artifacts/*.dmg
       - name: Build Ubuntu DEB
         if: runner.os == 'Linux'
         run: npm run tauri -- build --bundles deb
@@ -84,11 +97,11 @@ jobs:
           Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-15)} -ErrorAction SilentlyContinue |
             Where-Object { $_.Message -match 'kotoba-desktop|msedgewebview2' } |
             Select-Object TimeCreated, ProviderName, Id, Message | Format-List
-      - name: Upload private package and synthetic test evidence
+      - name: Upload package and synthetic test evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: desktop-package-${{ runner.os }}
+          name: desktop-package-${{ matrix.artifact }}
           path: |
             artifacts/*.dmg
             artifacts/*.deb

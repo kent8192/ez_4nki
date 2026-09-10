@@ -1,6 +1,6 @@
 # ez_4nki — CSVから作る単語帳
 
-CSVの列を問題・答え・解説・選択肢に割り当て、FSRSで復習するデスクトップアプリ。リポジトリは[kent8192/ez_4nki](https://github.com/kent8192/ez_4nki)（private）、アプリの表示名は仮称Kotoba。
+CSVの列を問題・答え・解説・選択肢に割り当て、FSRSで復習するデスクトップアプリ。リポジトリは[kent8192/ez_4nki](https://github.com/kent8192/ez_4nki)、アプリの表示名は仮称Kotoba。
 
 2026-09-09の合意済み設計に基づく実装を含む。CSV差分取り込み、学習履歴の保持、4段階評価と取り消し、当日の枚数上乗せ、忘却曲線・復習予測・端末内での個人向け調整、暗号化バックアップを実装した。3 OSでの完成条件と実行済みの検証は[実装と検証の進捗](docs/implementation-status.md)を参照。
 
@@ -10,7 +10,20 @@ CSVの列を問題・答え・解説・選択肢に割り当て、FSRSで復習�
 
 0.2.2では、再取り込みで「IDを使わない」が戻る問題、自動選択で列の役割が重複する問題、途中の画面更新で取り込み先が変わる問題、再プレビュー失敗後も古い候補が残る問題を修正した。複数デッキと1,024通りの取り込み手順を含む[照合の検証レポート](docs/identity-coverage-report.md)を参照。
 
-## 起動
+## ダウンロードして使う
+
+[最新版の配布ページ](https://github.com/kent8192/ez_4nki/releases/latest)から、利用する端末のファイルをダウンロードする。Node.js・Rustやソースのビルドは不要。
+
+| 端末 | ファイル |
+| --- | --- |
+| Windows 11・Intel/AMD x64 | `Kotoba_0.2.2_x64-setup.exe` |
+| Mac・Apple Silicon | `Kotoba_0.2.2_arm64.dmg` |
+| Mac・Intel | `Kotoba_0.2.2_x64.dmg` |
+| Ubuntu 24.04系・x86_64 | `Kotoba_0.2.2_amd64.deb` |
+
+WindowsはEXEを実行、MacはDMG内のKotobaをApplicationsへコピーする。Ubuntuの導入、初回起動、手動更新、署名の状態は[インストール手順](docs/install.md)を参照。
+
+## ソースから開発用に起動
 
 Node.js 24、Rust 1.96.0、各OSの[Tauriビルド環境](https://v2.tauri.app/start/prerequisites/)を用意する。
 

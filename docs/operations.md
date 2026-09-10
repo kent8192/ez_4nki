@@ -1,5 +1,7 @@
 # 運用とビルド
 
+ビルドせずに使う場合は、[配布ページ](https://github.com/kent8192/ez_4nki/releases/latest)と[インストール手順](install.md)を参照。
+
 ## 利用
 
 1. 単語帳に名前を付け、CSVを選ぶ。UTF-8/BOMまたはCP932を指定する。
@@ -99,7 +101,9 @@ cargo run --locked -p kotoba-core --example portability_fixture -- check synthet
 
 ## 配布物とネイティブ画面のCI
 
-`packages.yml`を手動実行すると、3 OSの配布物とSHA256・ビルド情報をprivateリポジトリのActions成果物へ保存する。公開リリースや自動更新は行わない。Windows・Ubuntuでは作成したパッケージをランナーにインストールし、Windowsでは同梱ランタイムと同じ版のMicrosoft Edge WebDriver、Ubuntuでは`tauri-driver`とWebKitWebDriverから実際の画面を操作する。Windowsのセッションでは起動したWebView2の版も照合し、起動に失敗した場合はドライバーの詳細ログを保存する。
+`packages.yml`を手動実行すると、Windows x64・Ubuntu x86_64・Mac Apple Silicon・Mac Intelの配布物とSHA256・版・ビルド情報をActions成果物へ保存する。Macはad-hoc署名を付け、署名・実行ファイルのCPU・DMGを検証する。Developer ID署名・Apple公証は行わない。Windows・Ubuntuでは作成したパッケージをランナーにインストールし、Windowsでは同梱ランタイムと同じ版のMicrosoft Edge WebDriver、Ubuntuでは`tauri-driver`とWebKitWebDriverから実際の画面を操作する。Windowsのセッションでは起動したWebView2の版も照合し、起動に失敗した場合はドライバーの詳細ログを保存する。
+
+利用者向け配布はGitHub Releasesで行う。配布担当者が全パッケージのビルド元コミット・版・SHA256とCIの成功を確認し、インストーラー4点、統合した`SHA256SUMS.txt`、`build-info.json`、`INSTALL.ja.md`のみをリリースに添付する。学習データ、CSV、バックアップ、ローカルの`artifacts`全体は添付しない。タグを検証済みコミットに固定し、公開後のダウンロード内容もSHA256で照合する。更新は利用者による手動インストールとする。
 
 `native-windows.yml`では既存のパッケージ実行IDを指定し、保存済みインストーラのSHA256を照合して画面検証だけを実行できる。証跡にはインストーラを作成したコミットとハッシュを含める。検証スクリプト側のコミットと製品バイナリ側のコミットが異なる場合、その違いを検証結果に明記する。
 

@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       package-run:
-        description: Run ID containing the private desktop-package-Windows artifact
+        description: Run ID containing the desktop-package-Windows artifact
         required: true
         type: string
 permissions:

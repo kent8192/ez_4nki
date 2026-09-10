@@ -25,6 +25,7 @@ const sums = packages.map((name) => `${createHash('sha256').update(readFileSync(
 writeFileSync(join(artifacts, 'SHA256SUMS.txt'), sums.join('\n') + '\n');
 const runtime = JSON.parse(readFileSync('scripts/webview2-runtime.json', 'utf8'));
 writeFileSync(join(artifacts, 'build-info.json'), JSON.stringify({
+  version: JSON.parse(readFileSync('package.json', 'utf8')).version,
   commit: process.env.GITHUB_SHA ?? execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
   platform: process.platform,
   architecture: process.arch,
