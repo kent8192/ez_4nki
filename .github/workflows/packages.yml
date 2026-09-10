@@ -50,7 +50,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           codesign --verify --deep --strict artifacts/Kotoba.app
-          lipo -verify_arch "$(uname -m)" artifacts/Kotoba.app/Contents/MacOS/kotoba-desktop
+          lipo artifacts/Kotoba.app/Contents/MacOS/kotoba-desktop -verify_arch "$(uname -m)"
           hdiutil verify artifacts/*.dmg
       - name: Build Ubuntu DEB
         if: runner.os == 'Linux'
