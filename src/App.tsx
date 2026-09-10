@@ -36,6 +36,7 @@ import type {
   View,
 } from './types';
 import './style.css';
+import { suggestMapping } from './importMapping';
 
 const percent = (n: number) => `${Math.round(n * 1000) / 10}%`;
 const date = (n: number | null) =>
@@ -187,6 +188,11 @@ export default function App({ transport }: { transport: Transport }) {
   const [name, setName] = useState('');
   const [query, setQuery] = useState('');
   const [source, setSource] = useState<Source | null>(null);
+  const [importTarget, setImportTarget] = useState<{
+    id: string;
+    name: string;
+    mapping: Mapping | null;
+  } | null>(null);
   const [encoding, setEncoding] = useState('utf-8');
   const [mapping, setMapping] = useState<Mapping>({
     question: 0,
@@ -302,6 +308,7 @@ export default function App({ transport }: { transport: Transport }) {
     if (modal === 'restore') void transport.command({ type: 'discardRestore' }).catch(reportError);
     setModal(null);
     setSource(null);
+    setImportTarget(null);
     setPreview(null);
     setRestore(null);
     setDeleteTarget(null);
@@ -387,10 +394,14 @@ export default function App({ transport }: { transport: Transport }) {
     return () => clearInterval(timer);
   }, [optimization?.status, transport]);
 
-  const openImport = () => {
+  const beginImport = (target: { id: string; name: string; mapping: Mapping | null }) => {
+    setImportTarget(target);
     setModal('import');
     setSource(null);
     setPreview(null);
+  };
+  const openImport = () => {
+    if (deck) beginImport(deck);
   };
   const chooseCsv = () =>
     run(async () => {
@@ -398,25 +409,7 @@ export default function App({ transport }: { transport: Transport }) {
       if (selectedSource) {
         setSource(selectedSource);
         setPreview(null);
-        const find = (names: string[]) =>
-          selectedSource.headers.findIndex((h) => names.includes(h.toLowerCase()));
-        const q = find(['問題', 'question', 'front']),
-          a = find(['答え', 'answer', 'back']),
-          e = find(['解説', 'explanation']),
-          id = find(['id']);
-        setMapping({
-          question: q >= 0 ? q : 0,
-          answer: a >= 0 ? a : 1,
-          explanation: e >= 0 ? e : null,
-          id: id >= 0 ? id : null,
-          choices: selectedSource.headers.flatMap((header, column) =>
-            ['選択肢', 'choices', 'options'].includes(header.toLowerCase()) &&
-            ![q >= 0 ? q : 0, a >= 0 ? a : 1, e, id].includes(column)
-              ? [column]
-              : [],
-          ),
-          choiceSeparator: null,
-        });
+        setMapping(suggestMapping(selectedSource.headers, importTarget?.mapping ?? null));
       }
     });
   const openDeckSettings = () => {
@@ -1094,7 +1087,7 @@ export default function App({ transport }: { transport: Transport }) {
                     <br />
                     端末内のデータ保護は、OSの暗号化とログイン保護に委ねています。
                   </p>
-                  <p className="footnote">Kotoba 0.2.1 · FSRS-6 · 更新はインストーラで手動適用</p>
+                  <p className="footnote">Kotoba 0.2.2 · FSRS-6 · 更新はインストーラで手動適用</p>
                 </div>
               </section>
             </>
@@ -1111,7 +1104,7 @@ export default function App({ transport }: { transport: Transport }) {
                 setSelected(id);
                 await refresh();
                 setPage('home');
-                openImport();
+                beginImport({ id, name: name.trim(), mapping: null });
               });
             }}
           >
@@ -1139,8 +1132,8 @@ export default function App({ transport }: { transport: Transport }) {
           </form>
         </Modal>
       )}
-      {modal === 'import' && deck && (
-        <Modal title={`CSVを取り込む · ${deck.name}`} close={close} wide>
+      {modal === 'import' && importTarget && (
+        <Modal title={`CSVを取り込む · ${importTarget.name}`} close={close} wide>
           <div className="steps">
             <span className={!source ? 'current' : ''}>1 ファイルを選ぶ</span>
             <ChevronRight size={15} />
@@ -1148,6 +1141,14 @@ export default function App({ transport }: { transport: Transport }) {
             <ChevronRight size={15} />
             <span className={preview ? 'current' : ''}>3 内容を確認</span>
           </div>
+          {source &&
+            importTarget.mapping &&
+            (importTarget.mapping.id === null) !== (mapping.id === null) && (
+              <p className="footnote" role="status">
+                前回の照合方法から変わっています。IDを使う場合は同じID、使わない場合は問題文の完全一致で照合します。
+                照合できない行は新規カードになり、既存カードは残ります。列の指定と更新内容を確認してください。
+              </p>
+            )}
           {!source && (
             <div className="file-picker">
               <FileSpreadsheet size={44} />
@@ -1329,7 +1330,7 @@ export default function App({ transport }: { transport: Transport }) {
                       setPreview(
                         await transport.command<Preview>({
                           type: 'previewImport',
-                          deckId: deck.id,
+                          deckId: importTarget.id,
                           sourceToken: source.token,
                           mapping,
                         }),
@@ -1388,7 +1389,7 @@ export default function App({ transport }: { transport: Transport }) {
                         const byQuestion = { ...mapping, id: null };
                         const next = await transport.command<Preview>({
                           type: 'previewImport',
-                          deckId: deck.id,
+                          deckId: importTarget.id,
                           sourceToken: source.token,
                           mapping: byQuestion,
                         });
@@ -1459,6 +1460,7 @@ export default function App({ transport }: { transport: Transport }) {
                     void run(async () => {
                       await transport.command({ type: 'applyImport', token: preview.token });
                       setSource(null);
+                      setImportTarget(null);
                       setPreview(null);
                       setModal(null);
                       await refresh();

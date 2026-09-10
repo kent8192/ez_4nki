@@ -8,6 +8,8 @@ CSVの列を問題・答え・解説・選択肢に割り当て、FSRSで復習�
 
 0.2.1では、重複IDのエラーから問題文照合で再プレビューする操作と、学習設定からの単語帳削除を追加した。選択肢のない2列CSVや、選択肢のある問題・ない問題が混在したCSVに対応する。選択肢の列は「選択肢を使わない」でまとめて解除できる。保存形式は2のまま。
 
+0.2.2では、再取り込みで「IDを使わない」が戻る問題、自動選択で列の役割が重複する問題、途中の画面更新で取り込み先が変わる問題、再プレビュー失敗後も古い候補が残る問題を修正した。複数デッキと1,024通りの取り込み手順を含む[照合の検証レポート](docs/identity-coverage-report.md)を参照。
+
 ## 起動
 
 Node.js 24、Rust 1.96.0、各OSの[Tauriビルド環境](https://v2.tauri.app/start/prerequisites/)を用意する。
@@ -26,7 +28,7 @@ macOSでのAPP・DMG作成:
 npm run package:macos
 ```
 
-成果物は `artifacts/Kotoba.app` と `artifacts/Kotoba_0.2.1_arm64.dmg`（Intelでビルドした場合は`x64`）。WindowsとUbuntuの手順、保存先、復旧方法は[運用とビルド](docs/operations.md)を参照。
+成果物は `artifacts/Kotoba.app` と `artifacts/Kotoba_0.2.2_arm64.dmg`（Intelでビルドした場合は`x64`）。WindowsとUbuntuの手順、保存先、復旧方法は[運用とビルド](docs/operations.md)を参照。
 
 ## 検証
 

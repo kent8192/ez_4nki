@@ -147,7 +147,8 @@ fn reimport_preserves_card_identity_schedule_and_missing_cards() {
     lib.apply_import(lib.preview_import(&id, &csv, mapping(), 100).unwrap())
         .unwrap();
     let original = lib.state.cards[0].id.clone();
-    lib.state.cards[0].schedule.reps = 5;
+    lib.grade(&original, 3, 100).unwrap();
+    let learned = lib.state.clone();
     let csv = parse_csv(
         include_bytes!("../../../docs/examples/updated.csv"),
         "utf-8",
@@ -177,9 +178,11 @@ fn reimport_preserves_card_identity_schedule_and_missing_cards() {
     );
     lib.apply_import(p).unwrap();
     let card = lib.state.cards.iter().find(|c| c.id == original).unwrap();
-    assert_eq!(card.schedule.reps, 5);
+    assert_eq!(card.schedule, learned.cards[0].schedule);
+    assert_eq!(lib.state.reviews, learned.reviews);
     assert_eq!(card.question, "2と3の合計は？");
     assert_eq!(lib.state.cards.len(), 4);
+    validate_snapshot(&lib.state).unwrap();
 }
 
 #[test]

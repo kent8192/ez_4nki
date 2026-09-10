@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect } from 'vitest';
 import App from '../App';
-import type { Preview, Transport, View } from '../types';
+import type { Mapping, Preview, Transport, View } from '../types';
 
 function harness() {
   const requests: Record<string, unknown>[] = [];
@@ -60,10 +60,26 @@ function harness() {
       },
     },
   };
+  const emptyDeck = { ...structuredClone(view.decks[0]), mapping: null };
+  const emptyQueue = { ...structuredClone(view.queues.deck), cardIds: [], remainingNew: 0 };
   const transport: Transport = {
     async command<T>(request: Record<string, unknown>): Promise<T> {
       requests.push(request);
       if (request.type === 'previewImport') return structuredClone(responses.preview) as T;
+      if (request.type === 'createDeck') {
+        view.decks.push({ ...emptyDeck, id: 'created', name: String(request.name).trim() });
+        view.queues.created = structuredClone(emptyQueue);
+        view.revision += 1;
+        return 'created' as T;
+      }
+      if (request.type === 'applyImport') {
+        const requested = requests.filter((r) => r.type === 'previewImport').at(-1)!;
+        view.decks.find((d) => d.id === requested.deckId)!.mapping = structuredClone(
+          requested.mapping as Mapping,
+        );
+        view.revision += 1;
+        return null as T;
+      }
       if (request.type === 'deleteDeck') {
         view.decks = view.decks.filter((deck) => deck.id !== request.deckId);
         view.cards = view.cards.filter((card) => card.deckId !== request.deckId);
@@ -98,6 +114,195 @@ function harness() {
 }
 
 describe('CSV choices and consolidation', () => {
+  it('preserves applied matching preferences through reopen without leaking them to another deck', async () => {
+    const { transport, view, responses } = harness();
+    view.decks.push({
+      ...view.decks[0],
+      id: 'other',
+      name: 'IDで照合',
+      mapping: {
+        question: 1,
+        answer: 2,
+        explanation: null,
+        id: 0,
+        choices: [3],
+        choiceSeparator: '|',
+      },
+    });
+    transport.pickCsv = async () => ({
+      token: 'source',
+      headers: ['ID', '問題', '答え', '選択肢'],
+      rows: [['1', 'Q', 'A', 'A|B']],
+    });
+    responses.preview = {
+      token: 'preview',
+      deckId: 'deck',
+      changes: [],
+      errors: [],
+      missing: 0,
+      mergedRows: 0,
+    };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: 'CSVを取り込む' }));
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: /照合用ID/ }), '');
+    await user.click(screen.getByRole('button', { name: '選択肢を使わない' }));
+    await user.click(screen.getByRole('button', { name: '更新内容をプレビュー' }));
+    await user.click(screen.getByRole('button', { name: '内容を適用する' }));
+    await user.click(await screen.findByRole('button', { name: 'CSVを取り込む' }));
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    expect(screen.getByRole('combobox', { name: /照合用ID/ })).toHaveValue('');
+    expect(screen.getByRole('checkbox', { name: '4. 選択肢' })).not.toBeChecked();
+    await user.click(screen.getByRole('button', { name: '閉じる' }));
+    await user.click(screen.getByRole('button', { name: 'IDで照合 0' }));
+    await user.click(screen.getByRole('button', { name: 'CSVを取り込む' }));
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    expect(screen.getByRole('combobox', { name: /照合用ID/ })).toHaveValue('0');
+    expect(screen.getByRole('checkbox', { name: '4. 選択肢' })).toBeChecked();
+    expect(screen.getByLabelText('選択肢の区切り文字')).toHaveValue('|');
+  });
+
+  it('imports into the newly created deck instead of the previously selected deck', async () => {
+    const { transport, requests, responses, view } = harness();
+    view.decks[0].mapping = {
+      question: 1,
+      answer: 2,
+      explanation: null,
+      id: null,
+      choices: [],
+      choiceSeparator: null,
+    };
+    transport.pickCsv = async () => ({
+      token: 'new',
+      headers: ['ID', '問題', '答え'],
+      rows: [['1', 'Q', 'A']],
+    });
+    responses.preview = {
+      token: 'preview',
+      deckId: 'created',
+      changes: [],
+      errors: [],
+      missing: 0,
+      mergedRows: 0,
+    };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: '単語帳を作成' }));
+    await user.type(screen.getByLabelText('単語帳の名前'), '新しく作成');
+    await user.click(screen.getByRole('button', { name: '作成してCSVを選ぶ' }));
+    expect(
+      await screen.findByRole('dialog', { name: 'CSVを取り込む · 新しく作成' }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    expect(screen.getByRole('combobox', { name: /照合用ID/ })).toHaveValue('0');
+    await user.click(screen.getByRole('button', { name: '更新内容をプレビュー' }));
+    expect(requests.filter((r) => r.type === 'previewImport').at(-1)?.deckId).toBe('created');
+  });
+
+  it('warns when the previous ID matching mode cannot be inferred from the new layout', async () => {
+    const { transport, view } = harness();
+    view.decks[0].mapping = {
+      question: 0,
+      answer: 1,
+      explanation: null,
+      id: 2,
+      choices: [],
+      choiceSeparator: null,
+    };
+    transport.pickCsv = async () => ({
+      token: 'reordered',
+      headers: ['識別番号', '問題', '答え'],
+      rows: [['001', 'Q', 'A']],
+    });
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: 'CSVを取り込む' }));
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    expect(screen.getByRole('combobox', { name: /照合用ID/ })).toHaveValue('');
+    expect(screen.getByText(/前回の照合方法から変わっています/)).toBeInTheDocument();
+    await user.selectOptions(screen.getByRole('combobox', { name: /照合用ID/ }), '0');
+    expect(screen.queryByText(/前回の照合方法から変わっています/)).not.toBeInTheDocument();
+  });
+
+  it('keeps question matching when reimporting a deck that explicitly does not use IDs', async () => {
+    const { transport, view } = harness();
+    view.decks[0].mapping = {
+      question: 1,
+      answer: 2,
+      explanation: null,
+      id: null,
+      choices: [],
+      choiceSeparator: null,
+    };
+    transport.pickCsv = async () => ({
+      token: 'again',
+      headers: ['ID', '問題', '答え'],
+      rows: [
+        ['1', 'Q1', 'A'],
+        ['1', 'Q2', 'B'],
+      ],
+    });
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: 'CSVを取り込む' }));
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    expect(screen.getByLabelText(/照合用ID/)).toHaveValue('');
+  });
+
+  it.each([
+    { headers: ['ID', 'Term', 'Definition'] },
+    { headers: ['ID', '問題', '日本語'] },
+    { headers: ['answer', 'question', 'extra'] },
+    { headers: ['解説', '英単語', '日本語', 'ID'] },
+    { headers: ['ID', 'answer'] },
+  ])('never assigns the same CSV column to multiple roles: $headers', async ({ headers }) => {
+    const { transport } = harness();
+    transport.pickCsv = async () => ({
+      token: 'columns',
+      headers,
+      rows: [headers.map((_, i) => `value${i}`)],
+    });
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: 'CSVを取り込む' }));
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    const columns = [/^問題$/, /^答え$/, /解説/, /照合用ID/]
+      .map((label) => (screen.getByRole('combobox', { name: label }) as HTMLSelectElement).value)
+      .filter((value) => value !== '');
+    expect(new Set(columns).size).toBe(columns.length);
+  });
+
+  it('keeps the import target when the available decks change during column selection', async () => {
+    const { transport, requests, view, responses } = harness();
+    transport.pickCsv = async () => ({
+      token: 'target',
+      headers: ['問題', '答え'],
+      rows: [['Q', 'A']],
+    });
+    responses.preview = {
+      token: 'preview',
+      deckId: 'deck',
+      changes: [],
+      errors: [],
+      missing: 0,
+      mergedRows: 0,
+    };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: 'CSVを取り込む' }));
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    view.decks = [{ ...view.decks[0], id: 'other', name: '別の単語帳' }];
+    view.cards = [];
+    view.queues = {};
+    view.revision += 1;
+    fireEvent.focus(window);
+    await screen.findAllByText(/別の単語帳/);
+    await user.click(screen.getByRole('button', { name: '更新内容をプレビュー' }));
+    expect(requests.filter((r) => r.type === 'previewImport').at(-1)?.deckId).toBe('deck');
+    expect(screen.getByRole('dialog')).toHaveAccessibleName('CSVを取り込む · 基礎の単語');
+  });
+
   it('lets the user omit an automatically selected choice column', async () => {
     const { transport, requests, responses } = harness();
     transport.pickCsv = async () => ({

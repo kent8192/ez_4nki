@@ -233,7 +233,11 @@ impl AppState {
                 if *token != source_token {
                     return Err(invalid("CSVの選択が変わりました。選び直してください。"));
                 }
-                let preview = lib.preview_import(&deck_id, csv, mapping, now)?;
+                let preview = lib.preview_import(&deck_id, csv, mapping, now);
+                // A new attempt with the active source supersedes the previous candidate,
+                // including when the requested column assignment is invalid.
+                cache.preview = None;
+                let preview = preview?;
                 let token = uuid::Uuid::new_v4().to_string();
                 let output = json!({
                     "token": token,
@@ -415,6 +419,10 @@ impl AppState {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "import_tests.rs"]
+mod import_tests;
 
 #[cfg(test)]
 mod tests {
