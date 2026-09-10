@@ -43,7 +43,16 @@ const date = (n: number | null) =>
     ? '未学習'
     : new Date(n * 1000).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
 type ModalName =
-  'create' | 'import' | 'study' | 'bonus' | 'deckSettings' | 'backup' | 'restore' | 'edit' | null;
+  | 'create'
+  | 'import'
+  | 'study'
+  | 'bonus'
+  | 'deckSettings'
+  | 'deleteDeck'
+  | 'backup'
+  | 'restore'
+  | 'edit'
+  | null;
 
 function Choices({ choices }: { choices: Choice[] }) {
   if (!choices.length) return null;
@@ -200,6 +209,11 @@ export default function App({ transport }: { transport: Transport }) {
   const [passConfirm, setPassConfirm] = useState('');
   const [restore, setRestore] = useState<RestorePreview | null>(null);
   const [edit, setEdit] = useState<Card | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    name: string;
+    cardCount: number;
+  } | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [curveCard, setCurveCard] = useState('');
   const [curve, setCurve] = useState<CurvePoint[]>([]);
@@ -290,6 +304,7 @@ export default function App({ transport }: { transport: Transport }) {
     setSource(null);
     setPreview(null);
     setRestore(null);
+    setDeleteTarget(null);
     setPassphrase('');
     setPassConfirm('');
   };
@@ -1079,7 +1094,7 @@ export default function App({ transport }: { transport: Transport }) {
                     <br />
                     端末内のデータ保護は、OSの暗号化とログイン保護に委ねています。
                   </p>
-                  <p className="footnote">Kotoba 0.2.0 · FSRS-6 · 更新はインストーラで手動適用</p>
+                  <p className="footnote">Kotoba 0.2.1 · FSRS-6 · 更新はインストーラで手動適用</p>
                 </div>
               </section>
             </>
@@ -1220,6 +1235,12 @@ export default function App({ transport }: { transport: Transport }) {
                 </div>
                 {mapping.choices.length > 0 && (
                   <>
+                    <button
+                      className="secondary"
+                      onClick={() => setMapping({ ...mapping, choices: [], choiceSeparator: null })}
+                    >
+                      選択肢を使わない
+                    </button>
                     <label>
                       選択肢セルの読み方
                       <select
@@ -1264,8 +1285,12 @@ export default function App({ transport }: { transport: Transport }) {
                     )}
                   </>
                 )}
+                {mapping.choices.length === 0 && (
+                  <p className="footnote">選択肢なしで取り込みます。</p>
+                )}
                 <p className="footnote">
-                  1列にまとめた選択肢も取り込めます。「そのまま表示」は改行やカンマを保ち、空のセルは省きます。
+                  選択肢は任意です。同じCSVに選択肢のある問題とない問題を含められます。空欄の問題は選択肢なしになります。
+                  1列にまとめた選択肢も取り込めます。「そのまま表示」は改行やカンマを保ちます。
                 </p>
               </fieldset>
               <p className="footnote">
@@ -1320,6 +1345,11 @@ export default function App({ transport }: { transport: Transport }) {
           )}
           {preview && (
             <>
+              <p className="footnote">
+                {mapping.id === null
+                  ? '照合方法：問題文の完全一致'
+                  : `照合方法：ID（${mapping.id + 1}. ${source?.headers[mapping.id] || '見出しなし'}）`}
+              </p>
               <div className="preview-counts">
                 {[
                   ['new', '追加'],
@@ -1343,6 +1373,32 @@ export default function App({ transport }: { transport: Transport }) {
                       {e.line}行目：{e.message}
                     </p>
                   ))}
+                </div>
+              )}
+              {preview.errors.length > 0 && source && mapping.id !== null && (
+                <div className="import-recovery">
+                  <p className="footnote">
+                    IDを使わず、同じ問題文の行をまとめる場合は、問題文の完全一致で照合し直せます。適用前に更新内容を確認してください。
+                  </p>
+                  <button
+                    className="secondary"
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async () => {
+                        const byQuestion = { ...mapping, id: null };
+                        const next = await transport.command<Preview>({
+                          type: 'previewImport',
+                          deckId: deck.id,
+                          sourceToken: source.token,
+                          mapping: byQuestion,
+                        });
+                        setMapping(byQuestion);
+                        setPreview(next);
+                      })
+                    }
+                  >
+                    IDを使わず問題文でプレビュー
+                  </button>
                 </div>
               )}
               <div className="changes-list">
@@ -1615,6 +1671,51 @@ export default function App({ transport }: { transport: Transport }) {
               </button>
             </div>
           </form>
+          <div className="delete-deck-section">
+            <button
+              className="secondary danger"
+              disabled={busy}
+              onClick={() => {
+                setDeleteTarget({ id: deck.id, name: deck.name, cardCount: cards.length });
+                setModal('deleteDeck');
+              }}
+            >
+              単語帳を削除
+            </button>
+          </div>
+        </Modal>
+      )}
+      {modal === 'deleteDeck' && deleteTarget && (
+        <Modal title="単語帳を削除しますか？" close={close}>
+          <p className="plain-text">
+            <strong>{deleteTarget.name}</strong>
+          </p>
+          <p>
+            この単語帳のカード{deleteTarget.cardCount}
+            枚・学習履歴・学習設定・今日の上乗せを削除します。 この操作は取り消せません。
+          </p>
+          <div className="modal-actions">
+            <button className="secondary" disabled={busy} onClick={close}>
+              キャンセル
+            </button>
+            <button
+              className="primary danger"
+              disabled={busy}
+              onClick={() =>
+                void run(async () => {
+                  await transport.command({ type: 'deleteDeck', deckId: deleteTarget.id });
+                  await refresh();
+                  setSelected('');
+                  setPage('home');
+                  setModal(null);
+                  setDeleteTarget(null);
+                  setNotice('単語帳を削除しました。');
+                })
+              }
+            >
+              この単語帳を削除する
+            </button>
+          </div>
         </Modal>
       )}
       {modal === 'edit' && edit && (

@@ -17,6 +17,95 @@ fn library() -> (Library, String) {
 }
 
 #[test]
+fn explicit_question_matching_resolves_reused_ids_and_preserves_history() {
+    let (mut lib, id) = library();
+    let csv = parse_csv(b"id,q,a,e\n1,Q1,A1,E1\n", "utf-8").unwrap();
+    lib.apply_import(lib.preview_import(&id, &csv, mapping(), 100).unwrap())
+        .unwrap();
+    let card_id = lib.state.cards[0].id.clone();
+    lib.grade(&card_id, 3, 100).unwrap();
+    let before = lib.state.clone();
+    let csv = parse_csv(b"id,q,a,e\n1,Q1,A1,E1\n1,Q2,A2,E2\n1,Q1,A1,More\n", "utf-8").unwrap();
+    let conflict = lib.preview_import(&id, &csv, mapping(), 101).unwrap();
+    assert_eq!(conflict.errors.len(), 1);
+    assert_eq!(conflict.errors[0].line, 3);
+    assert!(conflict.errors[0].message.starts_with("2行目と同じID"));
+    assert!(lib.apply_import(conflict).is_err());
+    assert_eq!(lib.state, before);
+
+    let by_question = Mapping {
+        id: None,
+        ..mapping()
+    };
+    let preview = lib.preview_import(&id, &csv, by_question, 101).unwrap();
+    assert!(preview.errors.is_empty());
+    assert_eq!(preview.merged_rows, 1);
+    assert_eq!(preview.changes.len(), 2);
+    assert_eq!(preview.changes[0].source_lines, vec![2, 4]);
+    assert_eq!(preview.changes[0].after.id, card_id);
+    lib.apply_import(preview).unwrap();
+    assert_eq!(lib.state.reviews, before.reviews);
+    assert_eq!(lib.state.cards[0].schedule, before.cards[0].schedule);
+    assert_eq!(lib.state.cards[0].explanation, "E1\n\nMore");
+    assert_eq!(lib.state.cards[1].question, "Q2");
+    validate_snapshot(&lib.state).unwrap();
+}
+
+#[test]
+fn optional_choices_support_mixed_rows_and_can_be_removed_without_resetting_learning() {
+    let (mut lib, id) = library();
+    let csv = parse_csv(
+        b"q,a,options\nQ1,A1,\nQ2,A2,\nQ2,A2,one|two\nQ3,A3,   \n",
+        "utf-8",
+    )
+    .unwrap();
+    let mapping = Mapping {
+        question: 0,
+        answer: 1,
+        explanation: None,
+        id: None,
+        choices: vec![2],
+        choice_separator: Some("|".into()),
+    };
+    let preview = lib.preview_import(&id, &csv, mapping.clone(), 100).unwrap();
+    assert!(preview.errors.is_empty());
+    assert_eq!(preview.changes.len(), 3);
+    assert_eq!(preview.merged_rows, 1);
+    lib.apply_import(preview).unwrap();
+    assert!(lib.state.cards[0].choices.is_empty());
+    assert_eq!(
+        lib.state.cards[1]
+            .choices
+            .iter()
+            .map(|c| c.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["one", "two"]
+    );
+    assert!(lib.state.cards[2].choices.is_empty());
+    for card_id in lib.queue(&id, 100).unwrap().card_ids {
+        lib.grade(&card_id, 3, 100).unwrap();
+    }
+    let before = lib.state.clone();
+    let no_choices = Mapping {
+        choices: vec![],
+        choice_separator: None,
+        ..mapping
+    };
+    let preview = lib.preview_import(&id, &csv, no_choices, 101).unwrap();
+    assert!(preview.errors.is_empty());
+    assert_eq!(preview.changes[1].before.as_ref().unwrap().choices.len(), 2);
+    assert!(preview.changes[1].after.choices.is_empty());
+    lib.apply_import(preview).unwrap();
+    assert!(lib.state.cards.iter().all(|card| card.choices.is_empty()));
+    assert_eq!(lib.state.reviews, before.reviews);
+    for (after, before) in lib.state.cards.iter().zip(&before.cards) {
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.schedule, before.schedule);
+    }
+    validate_snapshot(&lib.state).unwrap();
+}
+
+#[test]
 fn arbitrary_columns_and_multiline_text_create_cards_without_unused_data() {
     let (mut lib, id) = library();
     let csv = parse_csv(

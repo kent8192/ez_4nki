@@ -1056,6 +1056,24 @@ tr:last-child td {
 .issues p {
   margin: 5px 0;
 }
+.import-recovery {
+  margin-bottom: 20px;
+}
+.delete-deck-section {
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 20px;
+}
+.secondary.danger {
+  color: #a33c32;
+  border-color: #d7b3af;
+}
+.primary.danger {
+  background: #a33c32;
+}
+.primary.danger:hover:not(:disabled) {
+  background: #8c3028;
+}
 .study-meta {
   display: flex;
   align-items: center;

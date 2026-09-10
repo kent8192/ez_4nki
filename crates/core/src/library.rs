@@ -59,6 +59,15 @@ impl Library {
         self.state.revision += 1;
         Ok(id)
     }
+    pub fn delete_deck(&mut self, id: &str) -> Result<()> {
+        self.deck(id)?;
+        self.state.decks.retain(|deck| deck.id != id);
+        self.state.cards.retain(|card| card.deck_id != id);
+        self.state.reviews.retain(|review| review.deck_id != id);
+        self.state.bonuses.retain(|bonus| bonus.deck_id != id);
+        self.state.revision += 1;
+        Ok(())
+    }
     pub fn preview_import(
         &self,
         deck: &str,
@@ -140,7 +149,7 @@ impl Library {
                     preview.errors.push(CsvIssue {
                         line,
                         message: format!(
-                            "{}行目と同じIDですが、問題文が異なります。別の問題には別のIDを指定してください。",
+                            "{}行目と同じIDですが、問題文が異なります。問題文で照合する場合は「照合用ID」を「使用しない」にしてください。IDで照合する場合は、別の問題に別のIDを指定してください。",
                             groups[group_index].lines[0]
                         ),
                     });

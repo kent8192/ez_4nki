@@ -37,6 +37,35 @@ impl Default for OptimizationJob {
         }
     }
 }
+impl OptimizationJob {
+    fn finish(
+        &mut self,
+        progress: &Arc<Mutex<fsrs::CombinedProgressState>>,
+        result: Result<Vec<f32>>,
+    ) {
+        // A deleted deck's worker must not overwrite a later job.
+        if !Arc::ptr_eq(&self.progress, progress) {
+            return;
+        }
+        self.parameters = None;
+        if progress.lock().map(|p| p.want_abort).unwrap_or(true) {
+            self.status = "cancelled".into();
+            self.message = "計算を中断しました。設定は変更していません。".into();
+        } else {
+            match result {
+                Ok(parameters) => {
+                    self.parameters = Some(parameters);
+                    self.status = "ready".into();
+                    self.message = "計算が完了しました。適用すると今後の復習に使用します。".into();
+                }
+                Err(error) => {
+                    self.status = "failed".into();
+                    self.message = error.to_string();
+                }
+            }
+        }
+    }
+}
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<Mutex<Database>>,
@@ -62,6 +91,9 @@ pub enum Command {
     View,
     CreateDeck {
         name: String,
+    },
+    DeleteDeck {
+        deck_id: String,
     },
     PreviewImport {
         source_token: String,
@@ -165,13 +197,35 @@ impl AppState {
             Command::CreateDeck { name } => {
                 self.mutate(|lib| Ok(json!(lib.create_deck(&name, now)?)))
             }
+            Command::DeleteDeck { deck_id } => {
+                let mut job = lock(&self.job)?;
+                let mut cache = lock(&self.imports)?;
+                let progress = job.progress.clone();
+                let mut progress_state = lock(&progress)?;
+                self.mutate(|lib| {
+                    lib.delete_deck(&deck_id)?;
+                    Ok(Value::Null)
+                })?;
+                if job.deck.as_deref() == Some(&deck_id) {
+                    progress_state.want_abort = true;
+                    *job = OptimizationJob::default();
+                }
+                if cache
+                    .preview
+                    .as_ref()
+                    .is_some_and(|(_, p)| p.deck_id == deck_id)
+                {
+                    *cache = ImportCache::default();
+                }
+                Ok(Value::Null)
+            }
             Command::PreviewImport {
                 source_token,
                 deck_id,
                 mapping,
             } => {
-                let lib = self.library()?;
                 let mut cache = lock(&self.imports)?;
+                let lib = self.library()?;
                 let (token, csv) = cache
                     .source
                     .as_ref()
@@ -273,14 +327,14 @@ impl AppState {
                 Ok(serde_json::to_value(self.library()?.curve(&card_id, now)?)?)
             }
             Command::StartOptimization { deck_id } => {
-                let lib = self.library()?;
-                lib.deck(&deck_id)?;
                 let mut job = lock(&self.job)?;
                 if job.status == "running" {
                     return Err(invalid(
                         "現在の計算が終わるか、中断してから再実行してください。",
                     ));
                 }
+                let lib = self.library()?;
+                lib.deck(&deck_id)?;
                 *job = OptimizationJob {
                     deck: Some(deck_id.clone()),
                     revision: lib.state.revision,
@@ -293,24 +347,7 @@ impl AppState {
                 tauri::async_runtime::spawn_blocking(move || {
                     let result = lib.optimize(&deck_id, progress.clone());
                     if let Ok(mut job) = job_state.lock() {
-                        if progress.lock().map(|p| p.want_abort).unwrap_or(true) {
-                            job.status = "cancelled".into();
-                            job.message = "計算を中断しました。設定は変更していません。".into();
-                        } else {
-                            match result {
-                                Ok(parameters) => {
-                                    job.parameters = Some(parameters);
-                                    job.status = "ready".into();
-                                    job.message =
-                                        "計算が完了しました。適用すると今後の復習に使用します。"
-                                            .into();
-                                }
-                                Err(error) => {
-                                    job.status = "failed".into();
-                                    job.message = error.to_string();
-                                }
-                            }
-                        }
+                        job.finish(&progress, result);
                     }
                 });
                 Ok(Value::Null)
@@ -382,6 +419,191 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn deleting_a_deck_persists_its_removal_and_cancels_only_its_pending_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = AppState::new(directory.path().into()).unwrap();
+        let csv = parse_csv(b"q,a\nQ,A\n", "utf-8").unwrap();
+        let mapping = Mapping {
+            question: 0,
+            answer: 1,
+            explanation: None,
+            id: None,
+            choices: vec![],
+            choice_separator: None,
+        };
+        app.mutate(|lib| {
+            for name in ["Keep", "Remove"] {
+                let deck = lib.create_deck(name, 100)?;
+                lib.apply_import(lib.preview_import(&deck, &csv, mapping.clone(), 100)?)?;
+                let card = lib.queue(&deck, 100)?.card_ids[0].clone();
+                lib.grade(&card, 3, 100)?;
+                lib.add_bonus(&deck, 5, 10, 100)?;
+                lib.configure_deck(&deck, 0.85, 30, Some(100))?;
+            }
+            Ok(Value::Null)
+        })
+        .unwrap();
+        let before = app.library().unwrap().state;
+        let keep = &before.decks[0].id;
+        let remove = &before.decks[1].id;
+        lock(&app.imports).unwrap().source = Some(("source".into(), csv));
+        app.handle(
+            Command::PreviewImport {
+                source_token: "source".into(),
+                deck_id: remove.clone(),
+                mapping,
+            },
+            101,
+        )
+        .unwrap();
+        *lock(&app.job).unwrap() = OptimizationJob {
+            deck: Some(remove.clone()),
+            revision: before.revision,
+            status: "running".into(),
+            ..Default::default()
+        };
+        let old_progress = lock(&app.job).unwrap().progress.clone();
+        app.handle(
+            serde_json::from_value(json!({"type": "deleteDeck", "deckId": remove})).unwrap(),
+            101,
+        )
+        .unwrap();
+        let after = app.library().unwrap().state;
+        assert_eq!(after.revision, before.revision + 1);
+        assert_eq!(after.decks, vec![before.decks[0].clone()]);
+        assert_eq!(after.cards, vec![before.cards[0].clone()]);
+        assert_eq!(after.reviews, vec![before.reviews[0].clone()]);
+        assert_eq!(after.bonuses, vec![before.bonuses[0].clone()]);
+        assert_eq!(after.settings, before.settings);
+        validate_snapshot(&after).unwrap();
+        assert!(lock(&app.imports).unwrap().source.is_none());
+        assert!(lock(&app.imports).unwrap().preview.is_none());
+        assert!(lock(&old_progress).unwrap().want_abort);
+        assert_eq!(lock(&app.job).unwrap().status, "idle");
+        assert!(app.handle(Command::ApplyOptimization, 102).is_err());
+        assert!(
+            app.handle(
+                Command::StartOptimization {
+                    deck_id: remove.clone()
+                },
+                102
+            )
+            .is_err()
+        );
+        {
+            let mut job = lock(&app.job).unwrap();
+            *job = OptimizationJob {
+                deck: Some(keep.clone()),
+                status: "running".into(),
+                ..Default::default()
+            };
+            job.finish(&old_progress, Ok(fsrs::DEFAULT_PARAMETERS.to_vec()));
+            assert_eq!(job.status, "running");
+            assert!(job.parameters.is_none());
+            let current_progress = job.progress.clone();
+            job.finish(&current_progress, Ok(fsrs::DEFAULT_PARAMETERS.to_vec()));
+            assert_eq!(job.status, "ready");
+        }
+        drop(app);
+        let app = AppState::new(directory.path().into()).unwrap();
+        assert_eq!(app.library().unwrap().state, after);
+        // The latest remaining review is still undoable after deleting the other deck.
+        app.handle(Command::Undo, 102).unwrap();
+        assert_eq!(
+            app.library().unwrap().state.cards[0].schedule,
+            Schedule::default()
+        );
+        app.handle(
+            Command::DeleteDeck {
+                deck_id: keep.clone(),
+            },
+            102,
+        )
+        .unwrap();
+        drop(app);
+        let app = AppState::new(directory.path().into()).unwrap();
+        let empty = app.library().unwrap().state;
+        assert!(empty.decks.is_empty());
+        assert!(empty.cards.is_empty());
+        assert!(empty.reviews.is_empty());
+        assert!(empty.bonuses.is_empty());
+        validate_snapshot(&empty).unwrap();
+    }
+
+    #[test]
+    fn deleting_an_unknown_or_unrelated_deck_preserves_other_pending_work() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = AppState::new(directory.path().into()).unwrap();
+        let keep = app
+            .handle(
+                Command::CreateDeck {
+                    name: "Keep".into(),
+                },
+                100,
+            )
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let remove = app
+            .handle(
+                Command::CreateDeck {
+                    name: "Remove".into(),
+                },
+                100,
+            )
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_owned();
+        lock(&app.imports).unwrap().source =
+            Some(("source".into(), parse_csv(b"q,a\nQ,A\n", "utf-8").unwrap()));
+        let preview = app
+            .handle(
+                Command::PreviewImport {
+                    source_token: "source".into(),
+                    deck_id: keep.clone(),
+                    mapping: Mapping {
+                        question: 0,
+                        answer: 1,
+                        explanation: None,
+                        id: None,
+                        choices: vec![],
+                        choice_separator: None,
+                    },
+                },
+                100,
+            )
+            .unwrap();
+        *lock(&app.job).unwrap() = OptimizationJob {
+            deck: Some(keep),
+            status: "running".into(),
+            ..Default::default()
+        };
+        let before = app.library().unwrap().state;
+        assert!(
+            app.handle(
+                Command::DeleteDeck {
+                    deck_id: "missing".into()
+                },
+                101
+            )
+            .is_err()
+        );
+        assert_eq!(app.library().unwrap().state, before);
+        app.handle(Command::DeleteDeck { deck_id: remove }, 101)
+            .unwrap();
+        assert_eq!(
+            lock(&app.imports).unwrap().preview.as_ref().unwrap().0,
+            preview["token"].as_str().unwrap()
+        );
+        assert!(lock(&app.imports).unwrap().source.is_some());
+        let job = lock(&app.job).unwrap();
+        assert_eq!(job.status, "running");
+        assert!(!lock(&job.progress).unwrap().want_abort);
+    }
+
     #[test]
     fn grouped_choices_survive_ipc_import_edit_and_restart_with_review_history() {
         let directory = tempfile::tempdir().unwrap();

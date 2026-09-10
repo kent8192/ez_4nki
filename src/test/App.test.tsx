@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect } from 'vitest';
 import App from '../App';
@@ -64,6 +64,13 @@ function harness() {
     async command<T>(request: Record<string, unknown>): Promise<T> {
       requests.push(request);
       if (request.type === 'previewImport') return structuredClone(responses.preview) as T;
+      if (request.type === 'deleteDeck') {
+        view.decks = view.decks.filter((deck) => deck.id !== request.deckId);
+        view.cards = view.cards.filter((card) => card.deckId !== request.deckId);
+        delete view.queues[String(request.deckId)];
+        view.revision += 1;
+        return null as T;
+      }
       if (request.type === 'grade') {
         view.queues.deck.cardIds = [];
         view.canUndo = true;
@@ -91,6 +98,133 @@ function harness() {
 }
 
 describe('CSV choices and consolidation', () => {
+  it('lets the user omit an automatically selected choice column', async () => {
+    const { transport, requests, responses } = harness();
+    transport.pickCsv = async () => ({
+      token: 'optional',
+      headers: ['問題', '答え', '選択肢'],
+      rows: [['Q', 'A', 'unused']],
+    });
+    responses.preview = {
+      token: 'preview',
+      deckId: 'deck',
+      changes: [],
+      errors: [],
+      missing: 0,
+      mergedRows: 0,
+    };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: 'CSVを取り込む' }));
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    await user.selectOptions(screen.getByLabelText('選択肢セルの読み方'), 'custom');
+    await user.click(screen.getByRole('button', { name: '選択肢を使わない' }));
+    expect(screen.getByText('選択肢なしで取り込みます。')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: '3. 選択肢' })).not.toBeChecked();
+    expect(screen.queryByLabelText('選択肢の区切り文字')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '更新内容をプレビュー' }));
+    expect(requests).toContainEqual({
+      type: 'previewImport',
+      deckId: 'deck',
+      sourceToken: 'optional',
+      mapping: {
+        question: 0,
+        answer: 1,
+        explanation: null,
+        id: null,
+        choices: [],
+        choiceSeparator: null,
+      },
+    });
+  });
+
+  it('explicitly switches an ID conflict to question matching without applying or losing choices', async () => {
+    const { transport, requests, responses } = harness();
+    transport.pickCsv = async () => ({
+      token: 'csv',
+      headers: ['ID', '問題', '答え', '選択肢'],
+      rows: [
+        ['1', 'Q1', 'A', 'A|B'],
+        ['1', 'Q2', 'B', 'A|B'],
+      ],
+    });
+    responses.preview = {
+      token: 'conflict',
+      deckId: 'deck',
+      changes: [],
+      missing: 0,
+      mergedRows: 0,
+      errors: [{ line: 3, message: '2行目と同じIDですが、問題文が異なります。' }],
+    };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: 'CSVを取り込む' }));
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    await user.selectOptions(screen.getByLabelText('選択肢セルの読み方'), 'custom');
+    await user.type(screen.getByLabelText('選択肢の区切り文字'), '|');
+    await user.click(screen.getByRole('button', { name: '更新内容をプレビュー' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('問題文が異なります');
+    expect(screen.getByRole('button', { name: '内容を適用する' })).toBeDisabled();
+    expect(requests.filter((r) => r.type === 'previewImport')).toHaveLength(1);
+    responses.preview = { ...responses.preview, token: 'by-question', errors: [] };
+    await user.click(screen.getByRole('button', { name: 'IDを使わず問題文でプレビュー' }));
+    await waitFor(() =>
+      expect(requests).toContainEqual({
+        type: 'previewImport',
+        deckId: 'deck',
+        sourceToken: 'csv',
+        mapping: {
+          question: 1,
+          answer: 2,
+          explanation: null,
+          id: null,
+          choices: [3],
+          choiceSeparator: '|',
+        },
+      }),
+    );
+    expect(screen.getByText('照合方法：問題文の完全一致')).toBeInTheDocument();
+    expect(requests.some((r) => r.type === 'applyImport')).toBe(false);
+  });
+
+  it('imports a two-column CSV without requiring choices', async () => {
+    const { transport, requests, responses } = harness();
+    transport.pickCsv = async () => ({
+      token: 'plain',
+      headers: ['問題', '答え'],
+      rows: [['Q', 'A']],
+    });
+    responses.preview = {
+      token: 'preview',
+      deckId: 'deck',
+      changes: [],
+      errors: [],
+      missing: 0,
+      mergedRows: 0,
+    };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: 'CSVを取り込む' }));
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    expect(screen.getByText('選択肢なしで取り込みます。')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '更新内容をプレビュー' }));
+    await waitFor(() =>
+      expect(requests).toContainEqual({
+        type: 'previewImport',
+        deckId: 'deck',
+        sourceToken: 'plain',
+        mapping: {
+          question: 0,
+          answer: 1,
+          explanation: null,
+          id: null,
+          choices: [],
+          choiceSeparator: null,
+        },
+      }),
+    );
+  });
+
   it('maps one choice column, passes the delimiter, and previews merged rows before applying', async () => {
     const { transport, requests, view, responses } = harness();
     transport.pickCsv = async () => ({
@@ -189,6 +323,75 @@ describe('CSV choices and consolidation', () => {
   });
 });
 
+describe('deck deletion', () => {
+  it('keeps the confirmed target when a refresh changes the available decks', async () => {
+    const { transport, requests, view } = harness();
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: '学習設定' }));
+    await user.click(screen.getByRole('button', { name: '単語帳を削除' }));
+    view.decks = [{ ...view.decks[0], id: 'other', name: '残す単語帳' }];
+    view.cards = [];
+    view.queues = {};
+    view.revision += 1;
+    fireEvent.focus(window);
+    await screen.findAllByText('残す単語帳');
+    expect(screen.getByRole('dialog', { name: '単語帳を削除しますか？' })).toHaveTextContent(
+      '基礎の単語',
+    );
+    await user.click(screen.getByRole('button', { name: 'この単語帳を削除する' }));
+    await waitFor(() =>
+      expect(requests.filter((r) => r.type === 'deleteDeck')).toEqual([
+        { type: 'deleteDeck', deckId: 'deck' },
+      ]),
+    );
+    expect(view.decks[0].id).toBe('other');
+  });
+
+  it('keeps the deck and confirmation visible when saving the deletion fails', async () => {
+    const { transport, view } = harness();
+    const command = transport.command;
+    transport.command = async <T,>(request: Record<string, unknown>): Promise<T> => {
+      if (request.type === 'deleteDeck') throw new Error('保存処理に失敗しました。');
+      return command<T>(request);
+    };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: '学習設定' }));
+    await user.click(screen.getByRole('button', { name: '単語帳を削除' }));
+    await user.click(screen.getByRole('button', { name: 'この単語帳を削除する' }));
+    for (const alert of await screen.findAllByRole('alert')) {
+      expect(alert).toHaveTextContent('保存処理に失敗しました。');
+    }
+    expect(screen.getByRole('dialog', { name: '単語帳を削除しますか？' })).toBeInTheDocument();
+    expect(screen.queryByText('単語帳を削除しました。')).not.toBeInTheDocument();
+    expect(view.decks).toHaveLength(1);
+  });
+
+  it('requires confirmation, supports cancellation, and returns to the empty library after deleting the last deck', async () => {
+    const { transport, requests } = harness();
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: '学習設定' }));
+    await user.click(screen.getByRole('button', { name: '単語帳を削除' }));
+    expect(screen.getByRole('dialog', { name: '単語帳を削除しますか？' })).toHaveTextContent(
+      '基礎の単語',
+    );
+    expect(requests.some((r) => r.type === 'deleteDeck')).toBe(false);
+    await user.click(screen.getByRole('button', { name: 'キャンセル' }));
+    expect(requests.some((r) => r.type === 'deleteDeck')).toBe(false);
+    await user.click(screen.getByRole('button', { name: '学習設定' }));
+    await user.click(screen.getByRole('button', { name: '単語帳を削除' }));
+    await user.click(screen.getByRole('button', { name: 'この単語帳を削除する' }));
+    await waitFor(() =>
+      expect(requests.filter((r) => r.type === 'deleteDeck')).toEqual([
+        { type: 'deleteDeck', deckId: 'deck' },
+      ]),
+    );
+    expect(await screen.findByRole('button', { name: '最初の単語帳を作る' })).toBeInTheDocument();
+  });
+});
+
 describe('learning flow', () => {
   it('shows a single-column choice block before revealing the answer as plain text', async () => {
     const { transport, requests, view } = harness();
@@ -215,6 +418,7 @@ describe('learning flow', () => {
     await user.click(await screen.findByRole('button', { name: '学習をはじめる' }));
     expect(screen.queryByText('答えの本文')).not.toBeInTheDocument();
     expect(screen.getByText('<img src=x onerror=alert(1)>')).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: '選択肢' })).not.toBeInTheDocument();
     expect(document.querySelector('img')).toBeNull();
     await user.keyboard(' ');
     expect(screen.getByText('答えの本文')).toBeInTheDocument();
