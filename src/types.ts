@@ -7,6 +7,8 @@ export interface Mapping {
   answer: number;
   explanation: number | null;
   id: number | null;
+  choices: number[];
+  choiceSeparator: string | null;
 }
 export interface Schedule {
   stability: number | null;
@@ -16,6 +18,10 @@ export interface Schedule {
   reps: number;
   lapses: number;
 }
+export interface Choice {
+  label: string;
+  text: string;
+}
 export interface Card {
   id: string;
   deckId: string;
@@ -23,6 +29,7 @@ export interface Card {
   question: string;
   answer: string;
   explanation: string;
+  choices: Choice[];
   createdAt: number;
   schedule: Schedule;
 }
@@ -60,6 +67,8 @@ export interface View {
 }
 export interface Change {
   line: number;
+  sourceLines: number[];
+  notes: string[];
   kind: 'new' | 'update' | 'unchanged';
   before: Card | null;
   after: Card;
@@ -70,6 +79,7 @@ export interface Preview {
   changes: Change[];
   errors: { line: number; message: string }[];
   missing: number;
+  mergedRows: number;
 }
 export interface Source {
   token: string;

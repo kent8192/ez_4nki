@@ -2,10 +2,11 @@ import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect } from 'vitest';
 import App from '../App';
-import type { Transport, View } from '../types';
+import type { Preview, Transport, View } from '../types';
 
 function harness() {
   const requests: Record<string, unknown>[] = [];
+  const responses: { preview: Preview | null } = { preview: null };
   const view: View = {
     revision: 1,
     settings: { timezone: 'Asia/Tokyo', dayStartHour: 4 },
@@ -32,6 +33,7 @@ function harness() {
         question: '<img src=x onerror=alert(1)>',
         answer: '答えの本文',
         explanation: '解説の本文',
+        choices: [],
         createdAt: 0,
         schedule: {
           stability: null,
@@ -61,6 +63,7 @@ function harness() {
   const transport: Transport = {
     async command<T>(request: Record<string, unknown>): Promise<T> {
       requests.push(request);
+      if (request.type === 'previewImport') return structuredClone(responses.preview) as T;
       if (request.type === 'grade') {
         view.queues.deck.cardIds = [];
         view.canUndo = true;
@@ -84,10 +87,127 @@ function harness() {
     exportBackup: async () => false,
     previewRestore: async () => null,
   };
-  return { transport, requests };
+  return { transport, requests, view, responses };
 }
 
+describe('CSV choices and consolidation', () => {
+  it('maps one choice column, passes the delimiter, and previews merged rows before applying', async () => {
+    const { transport, requests, view, responses } = harness();
+    transport.pickCsv = async () => ({
+      token: 'csv',
+      headers: ['問題', '答え', '選択肢', '補助情報'],
+      rows: [
+        ['Q', 'A', 'A. one|B. two', 'ignored'],
+        ['Q', 'A', 'A. one|B. two', 'ignored'],
+      ],
+    });
+    responses.preview = {
+      token: 'preview',
+      deckId: 'deck',
+      mergedRows: 1,
+      missing: 0,
+      errors: [],
+      changes: [
+        {
+          line: 2,
+          sourceLines: [2, 3],
+          kind: 'new',
+          before: null,
+          notes: ['異なる解説を2件まとめています。内容を確認してください。'],
+          after: {
+            ...view.cards[0],
+            question: 'Q',
+            answer: 'A',
+            choices: [
+              { label: '', text: 'A. one' },
+              { label: '', text: 'B. two' },
+            ],
+          },
+        },
+      ],
+    };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: 'CSVを取り込む' }));
+    await user.click(screen.getByRole('button', { name: 'ファイルを選ぶ' }));
+    expect(screen.getByRole('checkbox', { name: '3. 選択肢' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: '1. 問題' })).toBeDisabled();
+    expect(screen.getByLabelText('選択肢セルの読み方')).toHaveValue('whole');
+    await user.selectOptions(screen.getByLabelText('選択肢セルの読み方'), 'custom');
+    await user.type(screen.getByLabelText('選択肢の区切り文字'), '|');
+    await user.click(screen.getByRole('button', { name: '更新内容をプレビュー' }));
+    expect(await screen.findByText('重複 1行を統合')).toBeInTheDocument();
+    expect(screen.getByText('2・3行目')).toBeInTheDocument();
+    expect(screen.getByText('2行 → 1枚')).toBeInTheDocument();
+    expect(screen.getByText(/異なる解説を2件まとめています/)).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: '選択肢' })).toHaveTextContent('B. two');
+    expect(requests).toContainEqual({
+      type: 'previewImport',
+      deckId: 'deck',
+      sourceToken: 'csv',
+      mapping: {
+        question: 0,
+        answer: 1,
+        explanation: null,
+        id: null,
+        choices: [2],
+        choiceSeparator: '|',
+      },
+    });
+    expect(requests.some((r) => r.type === 'applyImport')).toBe(false);
+    await user.click(screen.getByRole('button', { name: '内容を適用する' }));
+    await waitFor(() => expect(requests).toContainEqual({ type: 'applyImport', token: 'preview' }));
+  });
+
+  it('lets the user edit a choice without dropping the remaining choices', async () => {
+    const { transport, requests, view } = harness();
+    view.cards[0].choices = [
+      { label: 'A', text: 'first' },
+      { label: 'B', text: 'second' },
+    ];
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: 'カード一覧' }));
+    await user.click(screen.getByRole('button', { name: '編集' }));
+    const choice = screen.getByLabelText('選択肢 1 の内容');
+    await user.clear(choice);
+    await user.type(choice, 'changed');
+    await user.click(screen.getByRole('button', { name: '変更を保存' }));
+    await waitFor(() =>
+      expect(requests).toContainEqual({
+        type: 'editCard',
+        cardId: 'card',
+        question: view.cards[0].question,
+        answer: view.cards[0].answer,
+        explanation: view.cards[0].explanation,
+        choices: [
+          { label: 'A', text: 'changed' },
+          { label: 'B', text: 'second' },
+        ],
+      }),
+    );
+  });
+});
+
 describe('learning flow', () => {
+  it('shows a single-column choice block before revealing the answer as plain text', async () => {
+    const { transport, requests, view } = harness();
+    view.cards[0].choices = [{ label: '選択肢', text: 'A. first\nB. <img src=x>' }];
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: '学習をはじめる' }));
+    const choices = screen.getByRole('list', { name: '選択肢' });
+    expect(choices).toHaveTextContent('A. first B. <img src=x>');
+    expect(choices.querySelector('.plain-text:last-child')?.textContent).toBe(
+      'A. first\nB. <img src=x>',
+    );
+    expect(document.querySelector('img')).toBeNull();
+    expect(screen.queryByText('答えの本文')).not.toBeInTheDocument();
+    expect(requests.some((r) => r.type === 'grade')).toBe(false);
+    await user.keyboard(' ');
+    expect(screen.getByText('答えの本文')).toBeInTheDocument();
+    expect(screen.getByRole('list', { name: '選択肢' })).toBeInTheDocument();
+  });
   it('hides answers until revealed, renders content as text, then sends one rating', async () => {
     const { transport, requests } = harness();
     const user = userEvent.setup();

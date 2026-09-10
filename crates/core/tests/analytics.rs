@@ -13,6 +13,8 @@ fn setup() -> (Library, String) {
                 answer: 1,
                 explanation: None,
                 id: None,
+                choices: vec![],
+                choice_separator: None,
             },
             1000,
         )
@@ -87,6 +89,8 @@ fn forecast_respects_card_limits_without_an_unrequested_time_budget() {
                 answer: 1,
                 explanation: None,
                 id: None,
+                choices: vec![],
+                choice_separator: None,
             },
             1000,
         )
@@ -120,6 +124,8 @@ fn real_local_optimizer_completes_and_cancelled_or_stale_work_cannot_change_sche
                 answer: 1,
                 explanation: None,
                 id: None,
+                choices: vec![],
+                choice_separator: None,
             },
             1_700_000_000,
         )

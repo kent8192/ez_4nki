@@ -5,7 +5,7 @@ fn populated() -> Snapshot {
     let id = lib
         .create_deck("架空の検証用単語帳", 1_789_000_000)
         .unwrap();
-    let csv = parse_csv(b"q,a\n2+3,5\n", "utf-8").unwrap();
+    let csv = parse_csv(b"q,a,options\n2+3,5,\"A. 4\nB. 5\"\n", "utf-8").unwrap();
     lib.apply_import(
         lib.preview_import(
             &id,
@@ -15,6 +15,8 @@ fn populated() -> Snapshot {
                 answer: 1,
                 explanation: None,
                 id: None,
+                choices: vec![2],
+                choice_separator: Some("\n".into()),
             },
             1_789_000_000,
         )
@@ -94,6 +96,93 @@ fn invalid_relationships_and_impossible_memory_are_rejected_before_saving() {
     let mut broken = state.clone();
     broken.cards.push(broken.cards[0].clone());
     assert!(validate_snapshot(&broken).is_err());
+    let mut broken = state.clone();
+    broken.cards[0].choices[0].text = "   ".into();
+    assert!(validate_snapshot(&broken).is_err());
+}
+
+fn legacy_json() -> serde_json::Value {
+    let mut value = serde_json::to_value(populated()).unwrap();
+    value["schema"] = 1.into();
+    for card in value["cards"].as_array_mut().unwrap() {
+        card.as_object_mut().unwrap().remove("choices");
+    }
+    for deck in value["decks"].as_array_mut().unwrap() {
+        let mapping = deck["mapping"].as_object_mut().unwrap();
+        mapping.remove("choices");
+        mapping.remove("choiceSeparator");
+    }
+    value
+}
+
+#[test]
+fn version_one_database_upgrades_without_changing_cards_or_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("library.sqlite3");
+    let value = legacy_json();
+    let legacy: Snapshot = serde_json::from_value(value.clone()).unwrap();
+    let mut expected = legacy.clone();
+    expected.schema = SCHEMA_VERSION;
+    let mut db = Database::open(&path, "UTC").unwrap();
+    db.save(&expected, 0).unwrap();
+    drop(db);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    for (table, items) in [("cards", &value["cards"]), ("decks", &value["decks"])] {
+        for item in items.as_array().unwrap() {
+            conn.execute(
+                &format!("UPDATE {table} SET payload=?1 WHERE id=?2"),
+                rusqlite::params![item.to_string(), item["id"].as_str().unwrap()],
+            )
+            .unwrap();
+        }
+    }
+    conn.pragma_update(None, "user_version", 1).unwrap();
+    drop(conn);
+    let db = Database::open(&path, "Asia/Tokyo").unwrap();
+    assert_eq!(db.load().unwrap(), expected);
+    drop(db);
+    let conn = rusqlite::Connection::open(&path).unwrap();
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, 2);
+    let payload: String = conn
+        .query_row("SELECT payload FROM cards LIMIT 1", [], |row| row.get(0))
+        .unwrap();
+    assert!(!payload.contains("choices"));
+}
+
+#[test]
+fn version_one_encrypted_backup_restores_with_empty_choices_and_the_same_history() {
+    use std::io::Write;
+    let value = legacy_json();
+    let password = "synthetic legacy fixture only";
+    let encryptor = age::Encryptor::with_user_passphrase(age::secrecy::SecretString::from(
+        password.to_string(),
+    ));
+    let mut bytes = vec![];
+    let mut writer = encryptor.wrap_output(&mut bytes).unwrap();
+    writer
+        .write_all(&serde_json::to_vec(&value).unwrap())
+        .unwrap();
+    writer.finish().unwrap();
+    let restored = decode_backup(&bytes, password.into()).unwrap();
+    let mut expected: Snapshot = serde_json::from_value(value).unwrap();
+    expected.schema = SCHEMA_VERSION;
+    assert_eq!(restored, expected);
+    assert!(restored.cards[0].choices.is_empty());
+    assert!(
+        restored.decks[0]
+            .mapping
+            .as_ref()
+            .unwrap()
+            .choices
+            .is_empty()
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let mut db = Database::open(&dir.path().join("restore.sqlite3"), "UTC").unwrap();
+    db.restore(&restored, 0).unwrap();
+    assert_eq!(db.load().unwrap().reviews, expected.reviews);
 }
 
 #[test]

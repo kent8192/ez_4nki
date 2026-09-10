@@ -25,6 +25,7 @@ import {
 import type {
   Analytics,
   Card,
+  Choice,
   CurvePoint,
   Mapping,
   Optimization,
@@ -43,6 +44,20 @@ const date = (n: number | null) =>
     : new Date(n * 1000).toLocaleDateString('ja-JP', { month: 'short', day: 'numeric' });
 type ModalName =
   'create' | 'import' | 'study' | 'bonus' | 'deckSettings' | 'backup' | 'restore' | 'edit' | null;
+
+function Choices({ choices }: { choices: Choice[] }) {
+  if (!choices.length) return null;
+  return (
+    <ul className="choice-list" aria-label="選択肢">
+      {choices.map((choice, i) => (
+        <li key={i}>
+          <span className="choice-label plain-text">{choice.label || `選択肢 ${i + 1}`}</span>
+          <span className="plain-text">{choice.text}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 function Modal({
   title,
@@ -169,6 +184,8 @@ export default function App({ transport }: { transport: Transport }) {
     answer: 1,
     explanation: null,
     id: null,
+    choices: [],
+    choiceSeparator: null,
   });
   const [preview, setPreview] = useState<Preview | null>(null);
   const [revealed, setRevealed] = useState(false);
@@ -377,6 +394,13 @@ export default function App({ transport }: { transport: Transport }) {
           answer: a >= 0 ? a : 1,
           explanation: e >= 0 ? e : null,
           id: id >= 0 ? id : null,
+          choices: selectedSource.headers.flatMap((header, column) =>
+            ['選択肢', 'choices', 'options'].includes(header.toLowerCase()) &&
+            ![q >= 0 ? q : 0, a >= 0 ? a : 1, e, id].includes(column)
+              ? [column]
+              : [],
+          ),
+          choiceSeparator: null,
         });
       }
     });
@@ -763,7 +787,7 @@ export default function App({ transport }: { transport: Transport }) {
                   <Search size={16} />
                   <input
                     aria-label="カードを検索"
-                    placeholder="問題・答えから検索"
+                    placeholder="問題・答え・選択肢から検索"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                   />
@@ -783,13 +807,20 @@ export default function App({ transport }: { transport: Transport }) {
                   <tbody>
                     {cards
                       .filter((c) =>
-                        `${c.question}\n${c.answer}`
+                        `${c.question}\n${c.answer}\n${c.choices.map((choice) => choice.text).join('\n')}`
                           .toLocaleLowerCase()
                           .includes(query.toLocaleLowerCase()),
                       )
                       .map((c) => (
                         <tr key={c.id}>
-                          <td className="text-cell">{c.question}</td>
+                          <td className="text-cell">
+                            {c.question}
+                            {c.choices.length > 0 && (
+                              <small className="muted card-choice-count">
+                                選択肢 {c.choices.length}件
+                              </small>
+                            )}
+                          </td>
                           <td className="text-cell muted">{c.answer}</td>
                           <td>
                             <span className={`pill ${c.schedule.reps ? '' : 'neutral'}`}>
@@ -1048,7 +1079,7 @@ export default function App({ transport }: { transport: Transport }) {
                     <br />
                     端末内のデータ保護は、OSの暗号化とログイン保護に委ねています。
                   </p>
-                  <p className="footnote">Kotoba 0.1.0 · FSRS-6 · 更新はインストーラで手動適用</p>
+                  <p className="footnote">Kotoba 0.2.0 · FSRS-6 · 更新はインストーラで手動適用</p>
                 </div>
               </section>
             </>
@@ -1139,12 +1170,14 @@ export default function App({ transport }: { transport: Transport }) {
                     {optional && <small>任意</small>}
                     <select
                       value={mapping[field] ?? ''}
-                      onChange={(e) =>
+                      onChange={(e) => {
+                        const column = e.target.value === '' ? null : Number(e.target.value);
                         setMapping({
                           ...mapping,
-                          [field]: e.target.value === '' ? null : Number(e.target.value),
-                        })
-                      }
+                          [field]: column,
+                          choices: mapping.choices.filter((choice) => choice !== column),
+                        });
+                      }}
                     >
                       {optional && <option value="">使用しない</option>}
                       {source.headers.map((h, i) => (
@@ -1156,8 +1189,88 @@ export default function App({ transport }: { transport: Transport }) {
                   </label>
                 ))}
               </div>
+              <fieldset className="choice-columns">
+                <legend>
+                  選択肢の列 <small>任意・複数選択可</small>
+                </legend>
+                <div className="choice-column-options">
+                  {source.headers.map((header, column) => (
+                    <label key={column}>
+                      <input
+                        type="checkbox"
+                        checked={mapping.choices.includes(column)}
+                        disabled={[
+                          mapping.question,
+                          mapping.answer,
+                          mapping.explanation,
+                          mapping.id,
+                        ].includes(column)}
+                        onChange={(e) =>
+                          setMapping({
+                            ...mapping,
+                            choices: e.target.checked
+                              ? [...mapping.choices, column].sort((a, b) => a - b)
+                              : mapping.choices.filter((choice) => choice !== column),
+                          })
+                        }
+                      />
+                      {column + 1}. {header || '見出しなし'}
+                    </label>
+                  ))}
+                </div>
+                {mapping.choices.length > 0 && (
+                  <>
+                    <label>
+                      選択肢セルの読み方
+                      <select
+                        value={
+                          mapping.choiceSeparator === null
+                            ? 'whole'
+                            : mapping.choiceSeparator === '\n'
+                              ? 'lines'
+                              : 'custom'
+                        }
+                        onChange={(e) =>
+                          setMapping({
+                            ...mapping,
+                            choiceSeparator:
+                              e.target.value === 'whole'
+                                ? null
+                                : e.target.value === 'lines'
+                                  ? '\n'
+                                  : '',
+                          })
+                        }
+                      >
+                        <option value="whole">セル全体をそのまま表示</option>
+                        <option value="lines">改行で選択肢を分ける</option>
+                        <option value="custom">区切り文字を指定する</option>
+                      </select>
+                    </label>
+                    {mapping.choiceSeparator !== null && mapping.choiceSeparator !== '\n' && (
+                      <label>
+                        選択肢の区切り文字
+                        <input
+                          value={mapping.choiceSeparator}
+                          placeholder="例：| または ;"
+                          onChange={(e) =>
+                            setMapping({
+                              ...mapping,
+                              choiceSeparator: e.target.value,
+                            })
+                          }
+                        />
+                      </label>
+                    )}
+                  </>
+                )}
+                <p className="footnote">
+                  1列にまとめた選択肢も取り込めます。「そのまま表示」は改行やカンマを保ち、空のセルは省きます。
+                </p>
+              </fieldset>
               <p className="footnote">
-                IDを使わない場合は問題文の完全一致で照合します。選択しない列は保存しません。
+                IDを使わない場合は同じ問題文の行を1枚にまとめます。IDを使う場合は同じID・問題文の行をまとめます。
+                答え・解説・選択肢は重複する内容を除いて保持し、プレビューで確認できます。選択しない列は保存しません。
               </p>
               <div className="table-scroll csv-table">
                 <table>
@@ -1218,6 +1331,9 @@ export default function App({ transport }: { transport: Transport }) {
                   </span>
                 ))}
                 <span className="pill neutral">CSVにない既存カード {preview.missing}枚を保持</span>
+                {preview.mergedRows > 0 && (
+                  <span className="pill">重複 {preview.mergedRows}行を統合</span>
+                )}
               </div>
               {preview.errors.length > 0 && (
                 <div role="alert" className="issues">
@@ -1236,7 +1352,8 @@ export default function App({ transport }: { transport: Transport }) {
                       <span className={`pill ${c.kind === 'unchanged' ? 'neutral' : ''}`}>
                         {c.kind === 'new' ? '追加' : c.kind === 'update' ? '更新' : '変更なし'}
                       </span>
-                      <small>{c.line}行目</small>
+                      <small>{c.sourceLines.join('・')}行目</small>
+                      {c.sourceLines.length > 1 && <small>{c.sourceLines.length}行 → 1枚</small>}
                     </div>
                     {(['question', 'answer', 'explanation'] as const).map((field, i) => (
                       <div key={field} className="change-field">
@@ -1247,6 +1364,30 @@ export default function App({ transport }: { transport: Transport }) {
                         <p>{c.after[field] || '（空欄）'}</p>
                       </div>
                     ))}
+                    {(c.after.choices.length > 0 || (c.before?.choices.length ?? 0) > 0) && (
+                      <div className="change-field change-choices">
+                        <small>選択肢</small>
+                        {c.before &&
+                          JSON.stringify(c.before.choices) !== JSON.stringify(c.after.choices) && (
+                            <div className="previous-choices">
+                              <small>変更前</small>
+                              <Choices choices={c.before.choices} />
+                            </div>
+                          )}
+                        {c.after.choices.length ? (
+                          <Choices choices={c.after.choices} />
+                        ) : (
+                          <p>（なし）</p>
+                        )}
+                      </div>
+                    )}
+                    {c.notes.length > 0 && (
+                      <div className="merge-notes">
+                        {c.notes.map((note, i) => (
+                          <p key={i}>{note}</p>
+                        ))}
+                      </div>
+                    )}
                   </article>
                 ))}
               </div>
@@ -1288,6 +1429,7 @@ export default function App({ transport }: { transport: Transport }) {
               <section className="flashcard">
                 <span className="eyebrow">QUESTION</span>
                 <h2 className="plain-text">{currentCard.question}</h2>
+                <Choices choices={currentCard.choices} />
                 {revealed && (
                   <div className="answer-area">
                     <span className="eyebrow">ANSWER</span>
@@ -1487,6 +1629,7 @@ export default function App({ transport }: { transport: Transport }) {
                   question: edit.question,
                   answer: edit.answer,
                   explanation: edit.explanation,
+                  choices: edit.choices,
                 },
                 'カードを更新しました。学習履歴は保持されています。',
               );
@@ -1503,6 +1646,69 @@ export default function App({ transport }: { transport: Transport }) {
                 />
               </label>
             ))}
+            <fieldset className="choice-editor">
+              <legend>選択肢</legend>
+              {edit.choices.map((choice, i) => (
+                <div className="choice-editor-row" key={i}>
+                  <label>
+                    選択肢 {i + 1} の見出し
+                    <input
+                      value={choice.label}
+                      onChange={(e) =>
+                        setEdit({
+                          ...edit,
+                          choices: edit.choices.map((value, index) =>
+                            index === i ? { ...value, label: e.target.value } : value,
+                          ),
+                        })
+                      }
+                    />
+                  </label>
+                  <label>
+                    選択肢 {i + 1} の内容
+                    <textarea
+                      required
+                      rows={2}
+                      value={choice.text}
+                      onChange={(e) =>
+                        setEdit({
+                          ...edit,
+                          choices: edit.choices.map((value, index) =>
+                            index === i ? { ...value, text: e.target.value } : value,
+                          ),
+                        })
+                      }
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="quiet"
+                    aria-label={`選択肢 ${i + 1} を削除`}
+                    onClick={() =>
+                      setEdit({
+                        ...edit,
+                        choices: edit.choices.filter((_, index) => index !== i),
+                      })
+                    }
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                className="secondary"
+                onClick={() =>
+                  setEdit({
+                    ...edit,
+                    choices: [...edit.choices, { label: '', text: '' }],
+                  })
+                }
+              >
+                <Plus size={16} />
+                選択肢を追加
+              </button>
+            </fieldset>
             <div className="modal-actions">
               <button className="primary" disabled={busy}>
                 変更を保存

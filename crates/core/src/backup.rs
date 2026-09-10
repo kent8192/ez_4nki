@@ -44,7 +44,10 @@ pub fn decode_backup(bytes: &[u8], passphrase: String) -> Result<Snapshot> {
     if plaintext.len() > MAX_BACKUP_BYTES {
         return Err(invalid("バックアップのサイズが上限を超えました。"));
     }
-    let state: Snapshot = serde_json::from_slice(&plaintext)?;
+    let mut state: Snapshot = serde_json::from_slice(&plaintext)?;
+    if state.schema == 1 {
+        state.schema = SCHEMA_VERSION;
+    }
     validate_snapshot(&state)?;
     Ok(state)
 }

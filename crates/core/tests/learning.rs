@@ -18,6 +18,8 @@ fn setup() -> (Library, String, i64) {
                 answer: 1,
                 explanation: None,
                 id: None,
+                choices: vec![],
+                choice_separator: None,
             },
             now,
         )
@@ -108,7 +110,7 @@ fn invalid_rating_or_future_review_never_changes_state_and_edit_retains_history(
     let before = lib.state.clone();
     assert!(lib.grade(&id, 3, now + 1).is_err());
     assert_eq!(before, lib.state);
-    lib.edit_card(&id, "Edited", "answer", "explanation")
+    lib.edit_card(&id, "Edited", "answer", "explanation", vec![])
         .unwrap();
     assert_eq!(lib.state.reviews, before.reviews);
     assert_eq!(lib.state.cards[0].schedule, before.cards[0].schedule);

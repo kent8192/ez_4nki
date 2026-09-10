@@ -1,8 +1,10 @@
 # ez_4nki — CSVから作る単語帳
 
-CSVの列を問題・答え・解説に割り当て、FSRSで復習するデスクトップアプリ。リポジトリは[kent8192/ez_4nki](https://github.com/kent8192/ez_4nki)（private）、アプリの表示名は仮称Kotoba。
+CSVの列を問題・答え・解説・選択肢に割り当て、FSRSで復習するデスクトップアプリ。リポジトリは[kent8192/ez_4nki](https://github.com/kent8192/ez_4nki)（private）、アプリの表示名は仮称Kotoba。
 
 2026-09-09の合意済み設計に基づく実装を含む。CSV差分取り込み、学習履歴の保持、4段階評価と取り消し、当日の枚数上乗せ、忘却曲線・復習予測・端末内での個人向け調整、暗号化バックアップを実装した。3 OSでの完成条件と実行済みの検証は[実装と検証の進捗](docs/implementation-status.md)を参照。
+
+0.2.0では重複する問題を1枚にまとめてプレビューし、1列にまとめた選択肢を取り込み・表示・編集できる。選択肢はそのまま表示するか、改行や指定の区切り文字で分けられる。旧DB・旧暗号化バックアップを読み込める。新版のデータを復元する端末は0.2.0以降に更新する。
 
 ## 起動
 
@@ -22,7 +24,7 @@ macOSでのAPP・DMG作成:
 npm run package:macos
 ```
 
-成果物は `artifacts/Kotoba.app` と `artifacts/Kotoba_0.1.0_arm64.dmg`（Intelでビルドした場合は`x64`）。WindowsとUbuntuの手順、保存先、復旧方法は[運用とビルド](docs/operations.md)を参照。
+成果物は `artifacts/Kotoba.app` と `artifacts/Kotoba_0.2.0_arm64.dmg`（Intelでビルドした場合は`x64`）。WindowsとUbuntuの手順、保存先、復旧方法は[運用とビルド](docs/operations.md)を参照。
 
 ## 検証
 

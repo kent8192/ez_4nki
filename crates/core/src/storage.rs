@@ -42,7 +42,7 @@ impl Database {
                 CREATE TABLE cards (id TEXT PRIMARY KEY, position INTEGER NOT NULL, payload TEXT NOT NULL);
                 CREATE TABLE reviews (id TEXT PRIMARY KEY, position INTEGER NOT NULL, payload TEXT NOT NULL);
                 CREATE TABLE bonuses (id TEXT PRIMARY KEY, position INTEGER NOT NULL, payload TEXT NOT NULL);
-                PRAGMA user_version=1;")?;
+                PRAGMA user_version=2;")?;
             conn.execute(
                 "INSERT INTO metadata VALUES (1,0,?1)",
                 [serde_json::to_string(&state.settings)?],
@@ -67,6 +67,12 @@ impl Database {
             path: path.into(),
         };
         db.load()?;
+        if version == 1 {
+            // Version 1 payloads decode with empty choices. Mark the database only
+            // after validating it, so older apps cannot overwrite choice data.
+            db.conn
+                .pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        }
         Ok(db)
     }
     pub fn load(&self) -> Result<Snapshot> {
@@ -232,6 +238,10 @@ pub fn validate_snapshot(state: &Snapshot) -> Result<()> {
             || card.question.trim().is_empty()
             || card.answer.trim().is_empty()
             || card.source_id.as_ref().is_some_and(|s| s.trim().is_empty())
+            || card
+                .choices
+                .iter()
+                .any(|choice| choice.text.trim().is_empty())
         {
             return Err(invalid("カードの内容または単語帳との関係が不正です。"));
         }

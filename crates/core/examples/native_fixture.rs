@@ -33,6 +33,8 @@ fn main() {
                         answer: 2,
                         explanation: Some(3),
                         id: Some(0),
+                        choices: vec![],
+                        choice_separator: None,
                     },
                     now,
                 )

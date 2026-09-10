@@ -7,6 +7,7 @@ if (process.platform !== 'darwin') throw new Error('Build this package on macOS.
 const run = (cmd, args) => execFileSync(cmd, args, { stdio: 'inherit' });
 run('npm', ['run', 'tauri', '--', 'build', '--bundles', 'app']);
 const metadata = JSON.parse(execFileSync('cargo', ['metadata', '--no-deps', '--format-version', '1'], { encoding: 'utf8' }));
+const version = metadata.packages.find((pkg) => pkg.name === 'kotoba-desktop').version;
 const source = join(metadata.target_directory, 'release/bundle/macos/Kotoba.app');
 const artifacts = resolve('artifacts');
 mkdirSync(artifacts, { recursive: true });
@@ -15,7 +16,7 @@ const stage = mkdtempSync(join(tmpdir(), 'kotoba-dmg-'));
 try {
   run('ditto', [source, join(stage, 'Kotoba.app')]);
   symlinkSync('/Applications', join(stage, 'Applications'));
-  run('hdiutil', ['create', '-ov', '-volname', 'Kotoba', '-srcfolder', stage, '-format', 'UDZO', join(artifacts, `Kotoba_0.1.0_${process.arch}.dmg`)]);
+  run('hdiutil', ['create', '-ov', '-volname', 'Kotoba', '-srcfolder', stage, '-format', 'UDZO', join(artifacts, `Kotoba_${version}_${process.arch}.dmg`)]);
 } finally {
   rmSync(stage, { recursive: true, force: true });
 }

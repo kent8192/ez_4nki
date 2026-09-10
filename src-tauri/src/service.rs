@@ -96,6 +96,7 @@ pub enum Command {
         question: String,
         answer: String,
         explanation: String,
+        choices: Vec<Choice>,
     },
     Analytics {
         deck_id: String,
@@ -180,7 +181,14 @@ impl AppState {
                 }
                 let preview = lib.preview_import(&deck_id, csv, mapping, now)?;
                 let token = uuid::Uuid::new_v4().to_string();
-                let output = json!({ "token": token, "deckId": preview.deck_id, "changes": preview.changes, "errors": preview.errors, "missing": preview.missing });
+                let output = json!({
+                    "token": token,
+                    "deckId": preview.deck_id,
+                    "changes": preview.changes,
+                    "errors": preview.errors,
+                    "missing": preview.missing,
+                    "mergedRows": preview.merged_rows,
+                });
                 cache.preview = Some((token, preview));
                 Ok(output)
             }
@@ -253,8 +261,9 @@ impl AppState {
                 question,
                 answer,
                 explanation,
+                choices,
             } => self.mutate(|lib| {
-                lib.edit_card(&card_id, &question, &answer, &explanation)?;
+                lib.edit_card(&card_id, &question, &answer, &explanation, choices)?;
                 Ok(Value::Null)
             }),
             Command::Analytics { deck_id } => Ok(serde_json::to_value(
@@ -374,6 +383,65 @@ impl AppState {
 mod tests {
     use super::*;
     #[test]
+    fn grouped_choices_survive_ipc_import_edit_and_restart_with_review_history() {
+        let directory = tempfile::tempdir().unwrap();
+        let app = AppState::new(directory.path().into()).unwrap();
+        let deck = app
+            .handle(
+                Command::CreateDeck {
+                    name: "Synthetic".into(),
+                },
+                100,
+            )
+            .unwrap();
+        let csv = parse_csv(
+            b"q,a,options\nQ,A,A. one|B. two\nQ,A,A. one|B. two\n",
+            "utf-8",
+        )
+        .unwrap();
+        lock(&app.imports).unwrap().source = Some(("source".into(), csv));
+        let preview = app.handle(serde_json::from_value(json!({
+            "type": "previewImport", "deckId": deck, "sourceToken": "source",
+            "mapping": {"question": 0, "answer": 1, "explanation": null, "id": null, "choices": [2], "choiceSeparator": "|"}
+        })).unwrap(), 100).unwrap();
+        assert_eq!(preview["mergedRows"], 1);
+        assert_eq!(preview["changes"][0]["sourceLines"], json!([2, 3]));
+        app.handle(
+            Command::ApplyImport {
+                token: preview["token"].as_str().unwrap().into(),
+            },
+            100,
+        )
+        .unwrap();
+        let state = app.library().unwrap().state;
+        assert_eq!(state.cards.len(), 1);
+        let card_id = state.cards[0].id.clone();
+        app.handle(
+            Command::Grade {
+                card_id: card_id.clone(),
+                rating: 3,
+            },
+            100,
+        )
+        .unwrap();
+        let before = app.library().unwrap().state;
+        app.handle(serde_json::from_value(json!({
+            "type": "editCard", "cardId": card_id, "question": "Q", "answer": "A", "explanation": "E",
+            "choices": [{"label": "A", "text": "changed"}, {"label": "B", "text": "two"}]
+        })).unwrap(), 101).unwrap();
+        let view = app.handle(Command::View, 101).unwrap();
+        assert_eq!(view["cards"][0]["choices"][0]["text"], "changed");
+        drop(app);
+        let app = AppState::new(directory.path().into()).unwrap();
+        let after = app.library().unwrap().state;
+        assert_eq!(after.cards[0].id, before.cards[0].id);
+        assert_eq!(after.cards[0].schedule, before.cards[0].schedule);
+        assert_eq!(after.reviews, before.reviews);
+        assert_eq!(after.cards[0].choices.len(), 2);
+        assert_eq!(after.cards[0].choices[0].text, "changed");
+    }
+
+    #[test]
     fn cancellation_still_discards_a_result_that_just_finished() {
         let directory = tempfile::tempdir().unwrap();
         let app = AppState::new(directory.path().into()).unwrap();
@@ -430,6 +498,8 @@ mod tests {
                 answer: 1,
                 explanation: None,
                 id: None,
+                choices: vec![],
+                choice_separator: None,
             },
         };
         let preview = app.handle(request(), 100).unwrap();

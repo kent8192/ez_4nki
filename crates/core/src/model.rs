@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 pub const ALGORITHM: &str = "FSRS-6 / fsrs-rs 6.6.2";
 
 #[derive(Debug, thiserror::Error)]
@@ -35,6 +35,10 @@ pub struct Mapping {
     pub answer: usize,
     pub explanation: Option<usize>,
     pub id: Option<usize>,
+    #[serde(default)]
+    pub choices: Vec<usize>,
+    #[serde(default)]
+    pub choice_separator: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -64,6 +68,13 @@ pub struct Schedule {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct Choice {
+    pub label: String,
+    pub text: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Card {
     pub id: String,
     pub deck_id: String,
@@ -71,6 +82,8 @@ pub struct Card {
     pub question: String,
     pub answer: String,
     pub explanation: String,
+    #[serde(default)]
+    pub choices: Vec<Choice>,
     pub created_at: i64,
     pub schedule: Schedule,
 }
@@ -126,6 +139,8 @@ pub struct ParsedCsv {
 #[serde(rename_all = "camelCase")]
 pub struct Change {
     pub line: usize,
+    pub source_lines: Vec<usize>,
+    pub notes: Vec<String>,
     pub kind: String,
     pub before: Option<Card>,
     pub after: Card,
@@ -145,6 +160,7 @@ pub struct ImportPreview {
     pub changes: Vec<Change>,
     pub errors: Vec<CsvIssue>,
     pub missing: usize,
+    pub merged_rows: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]

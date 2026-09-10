@@ -7,5 +7,6 @@
 | [initial.csv](initial.csv) | 3カードの初回取り込み。ID・問題・答え・解説を選び、余った列を取り込まない。引用符で囲まれた解説には改行が含まれる |
 | [updated.csv](updated.csv) | 列の順番が変わったCSVを再取り込み。ID 001は更新して履歴保持、003は変更なし、004は追加。CSVから消えた002は保持 |
 | [ambiguous.csv](ambiguous.csv) | ID 001が重複している。曖昧さを表示し、自動更新しない |
+| [choices.csv](choices.csv) | 1列にまとめた選択肢。3行を2枚に統合し、異なる解説をプレビューで示す。既定のセル全体表示で改行と区切りを保つ |
 
 initial.csvの取り込み後に架空の学習履歴を付け、updated.csvの適用後もID 001の履歴が維持されることを確認する。macOSアプリでの実行結果と、他OSを含む検証状況は[実装と検証の進捗](../implementation-status.md)を参照。

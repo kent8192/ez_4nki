@@ -1,9 +1,25 @@
 use crate::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 pub struct Library {
     pub state: Snapshot,
+}
+
+struct ImportGroup {
+    key: String,
+    question: String,
+    source_id: Option<String>,
+    answers: Vec<String>,
+    explanations: Vec<String>,
+    choices: Vec<Choice>,
+    lines: Vec<usize>,
+}
+
+fn append_unique<T: PartialEq>(values: &mut Vec<T>, value: T) {
+    if !values.contains(&value) {
+        values.push(value);
+    }
 }
 
 impl Library {
@@ -61,6 +77,7 @@ impl Library {
         ]
         .into_iter()
         .flatten()
+        .chain(mapping.choices.iter().copied())
         .collect();
         if columns.iter().any(|i| *i >= csv.headers.len())
             || columns.iter().collect::<HashSet<_>>().len() != columns.len()
@@ -69,6 +86,11 @@ impl Library {
                 "列の割り当てを確認してください。同じ列は複数の役割に使えません。",
             ));
         }
+        if !mapping.choices.is_empty() && mapping.choice_separator.as_deref() == Some("") {
+            return Err(invalid("選択肢の区切り文字を入力してください。"));
+        }
+        let mut choice_columns = mapping.choices.clone();
+        choice_columns.sort_unstable();
         let existing: Vec<_> = self
             .state
             .cards
@@ -82,9 +104,10 @@ impl Library {
             changes: vec![],
             errors: vec![],
             missing: 0,
+            merged_rows: 0,
         };
-        let mut keys = HashSet::new();
-        let mut matched = HashSet::new();
+        let mut keys: HashMap<String, usize> = HashMap::new();
+        let mut groups: Vec<ImportGroup> = vec![];
         for (index, row) in csv.rows.iter().enumerate() {
             let line = csv.row_lines.get(index).copied().unwrap_or(index + 2);
             if row.len() != csv.headers.len() {
@@ -112,20 +135,71 @@ impl Library {
                 continue;
             }
             let key = source_id.as_deref().unwrap_or(&question);
-            if !keys.insert(key.to_string()) {
-                preview.errors.push(CsvIssue {
-                    line,
-                    message: "照合するIDまたは問題文がCSV内で重複しています。".into(),
+            let group_index = if let Some(&group_index) = keys.get(key) {
+                if groups[group_index].question != question {
+                    preview.errors.push(CsvIssue {
+                        line,
+                        message: format!(
+                            "{}行目と同じIDですが、問題文が異なります。別の問題には別のIDを指定してください。",
+                            groups[group_index].lines[0]
+                        ),
+                    });
+                    continue;
+                }
+                group_index
+            } else {
+                let group_index = groups.len();
+                keys.insert(key.to_string(), group_index);
+                groups.push(ImportGroup {
+                    key: key.to_string(),
+                    question,
+                    source_id,
+                    answers: vec![],
+                    explanations: vec![],
+                    choices: vec![],
+                    lines: vec![],
                 });
-                continue;
+                group_index
+            };
+            let group = &mut groups[group_index];
+            group.lines.push(line);
+            append_unique(&mut group.answers, answer);
+            if !explanation.trim().is_empty() {
+                append_unique(&mut group.explanations, explanation);
             }
+            for &column in &choice_columns {
+                let parts: Vec<_> = match mapping.choice_separator.as_deref() {
+                    Some("\n") => row[column].lines().map(str::trim).collect(),
+                    Some(separator) => row[column].split(separator).map(str::trim).collect(),
+                    None => vec![row[column].as_str()],
+                };
+                for text in parts {
+                    if !text.trim().is_empty() {
+                        append_unique(
+                            &mut group.choices,
+                            Choice {
+                                label: if mapping.choice_separator.is_some() {
+                                    String::new()
+                                } else {
+                                    csv.headers[column].clone()
+                                },
+                                text: text.into(),
+                            },
+                        );
+                    }
+                }
+            }
+        }
+        let mut matched = HashSet::new();
+        for group in groups {
+            let line = group.lines[0];
             let matches: Vec<_> = existing
                 .iter()
                 .filter(|c| {
                     if mapping.id.is_some() {
-                        c.source_id.as_deref() == Some(key)
+                        c.source_id.as_deref() == Some(&group.key)
                     } else {
-                        c.question == key
+                        c.question == group.key
                     }
                 })
                 .collect();
@@ -146,17 +220,19 @@ impl Library {
                 question: String::new(),
                 answer: String::new(),
                 explanation: String::new(),
+                choices: vec![],
                 created_at: now,
                 schedule: Schedule::default(),
             });
             if let Some(card) = &before {
                 matched.insert(card.id.clone());
             }
-            after.question = question;
-            after.answer = answer;
-            after.explanation = explanation;
+            after.question = group.question;
+            after.answer = group.answers.join("\n\n");
+            after.explanation = group.explanations.join("\n\n");
+            after.choices = group.choices;
             if mapping.id.is_some() {
-                after.source_id = source_id;
+                after.source_id = group.source_id;
             }
             let kind = if before.is_none() {
                 "new"
@@ -165,8 +241,22 @@ impl Library {
             } else {
                 "update"
             };
+            let mut notes = vec![];
+            for (field, count) in [
+                ("答え", group.answers.len()),
+                ("解説", group.explanations.len()),
+            ] {
+                if count > 1 {
+                    notes.push(format!(
+                        "異なる{field}を{count}件まとめています。内容を確認してください。"
+                    ));
+                }
+            }
+            preview.merged_rows += group.lines.len() - 1;
             preview.changes.push(Change {
                 line,
+                source_lines: group.lines,
+                notes,
                 kind: kind.into(),
                 before,
                 after,

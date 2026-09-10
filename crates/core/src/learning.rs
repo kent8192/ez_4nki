@@ -300,9 +300,13 @@ impl Library {
         question: &str,
         answer: &str,
         explanation: &str,
+        choices: Vec<Choice>,
     ) -> Result<()> {
         if question.trim().is_empty() || answer.trim().is_empty() {
             return Err(invalid("問題と答えを入力してください。"));
+        }
+        if choices.iter().any(|choice| choice.text.trim().is_empty()) {
+            return Err(invalid("空の選択肢は入力するか、削除してください。"));
         }
         let card = self
             .state
@@ -313,6 +317,7 @@ impl Library {
         card.question = question.into();
         card.answer = answer.into();
         card.explanation = explanation.into();
+        card.choices = choices;
         self.state.revision += 1;
         Ok(())
     }

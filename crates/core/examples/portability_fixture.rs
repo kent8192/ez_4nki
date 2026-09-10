@@ -8,7 +8,7 @@ fn fixture() -> Snapshot {
     let now = 1_789_000_000;
     let deck = lib.create_deck("合成データ・相互復元", now).unwrap();
     let csv = parse_csv(
-        "ID,問題,答え,解説\n001,2+3は？,5,架空の検証\n002,Hello,こんにちは,挨拶\n".as_bytes(),
+        "ID,問題,答え,解説,選択肢\n001,2+3は？,5,架空の検証,\"A. 4\nB. 5\"\n002,Hello,こんにちは,挨拶,\n".as_bytes(),
         "utf-8",
     )
     .unwrap();
@@ -21,6 +21,8 @@ fn fixture() -> Snapshot {
                 answer: 2,
                 explanation: Some(3),
                 id: Some(0),
+                choices: vec![4],
+                choice_separator: Some("\n".into()),
             },
             now,
         )
@@ -36,6 +38,14 @@ fn verify(state: &Snapshot) {
     assert_eq!(state.decks.len(), 1);
     assert_eq!(state.cards.len(), 2);
     assert_eq!(state.cards[0].question, "2+3は？");
+    assert_eq!(
+        state.cards[0]
+            .choices
+            .iter()
+            .map(|choice| choice.text.as_str())
+            .collect::<Vec<_>>(),
+        vec!["A. 4", "B. 5"]
+    );
     assert_eq!(state.reviews.len(), 1);
     assert_eq!(state.settings.timezone, "Asia/Tokyo");
     assert_eq!(state.settings.day_start_hour, 4);
