@@ -14,11 +14,9 @@ if ($Mode -eq 'create') {
     $existing = Get-ItemProperty -Path $key -Name $applicationName -ErrorAction SilentlyContinue
     if ($null -ne $existing) { throw 'Refusing to overwrite an existing application policy.' }
     if (!(Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
-    if (!$env:KOTOBA_TEST_NET_LOG) { throw 'Specify the temporary CI network log path.' }
-    $arguments = '--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --net-log-capture-mode=Default --log-net-log="' + $env:KOTOBA_TEST_NET_LOG + '"'
-    New-ItemProperty -Path $key -Name $applicationName -PropertyType String -Value $arguments | Out-Null
+    New-ItemProperty -Path $key -Name $applicationName -PropertyType String -Value '--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1' | Out-Null
     $actual = Get-ItemPropertyValue -Path $key -Name $applicationName
-    if ($actual -ne $arguments) { throw 'CI debugging policy readback failed.' }
+    if ($actual -ne '--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1') { throw 'CI debugging policy readback failed.' }
     Write-Output "Elevated CI process: $elevated. Created and verified the application-specific HKLM loopback debugging policy."
 } else {
     Remove-ItemProperty -Path $key -Name $applicationName

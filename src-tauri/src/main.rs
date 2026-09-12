@@ -1,4 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#[cfg(any(windows, test))]
+mod offline_proxy;
 mod service;
 use kotoba_core::{MAX_BACKUP_BYTES, decode_backup, encode_backup, invalid, parse_csv};
 use serde_json::{Value, json};
@@ -119,6 +121,18 @@ async fn preview_restore(passphrase: String, state: State<'_, AppState>) -> Resu
 }
 
 fn main() {
+    let context = tauri::generate_context!();
+    #[cfg(windows)]
+    let (_offline_proxy, context) = {
+        let proxy = offline_proxy::OfflineProxy::start()
+            .expect("Could not start the offline WebView2 proxy");
+        let mut context = context;
+        for window in &mut context.config_mut().app.windows {
+            window.proxy_url =
+                Some(tauri::Url::parse(&proxy.url()).expect("Valid loopback proxy URL"));
+        }
+        (proxy, context)
+    };
     tauri::Builder::default()
         .setup(|app| {
             app.manage(AppState::new(app.path().app_local_data_dir()?)?);
@@ -130,6 +144,6 @@ fn main() {
             export_backup,
             preview_restore
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("Application startup failed");
 }

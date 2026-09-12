@@ -35,3 +35,11 @@ npm test -- src/test/App.test.tsx -t 'keeps the (active question|question, choic
 Windows・Ubuntuのパッケージ検証に、実際のアプリでカードAを「忘れた」と評価し、カードBの答えを表示したまま期限到来を待つ操作を追加した。問題Bと答えが保たれ、残件数が2枚になり、Bの評価後にAが表示されることを確認する。取り消し・再評価後のSQLite保存と再起動も従来の検証に含める。
 
 この自動検証は使い捨てCI環境で行う。利用者のWSL/WSLgの描画環境やWindows 11実機での確認とは区別する。
+
+## Windowsランタイムの通信
+
+1分待つ検証を追加した結果、Windowsの画面操作は成功したが、同梱WebView2が起動の約1分後にDNS通信2件とHTTPS通信1件を行い、通信検査が失敗した。合成データの追加検証でも再現し、接続先は`edge.microsoft.com`だった。WebView2は画面のCSPとは別に通信を行う場合があり、[Microsoftの資料](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/data-privacy)でもランタイム自身のデータ収集が説明されている。今回の記録から送信内容までは判断していない。
+
+Windows版では[TauriのproxyUrl](https://v2.tauri.app/reference/config/#proxyurl)で、アプリが所有するループバックの接続先をWebView2へ設定する。この接続先は要求を読み取らずに閉じ、名前解決・記録・外部転送を行わない。ポートは起動中保持し、初期化に失敗した場合は通信制限なしで起動しない。終了時には接続先を解放する。OSのプロキシ設定・ファイアウォール・診断設定は変更しない。
+
+HTTP/CONNECTの拒否と、接続先の所有・終了時の解放を検証するRustテスト2件を追加した。通信検査の非ループバック接続を失敗とする条件は維持する。観測結果は同梱ランタイムとCIの操作範囲に限り、端末全体のネットワーク隔離を保証するものではない。調査用のNetLog設定は製品・最終検証スクリプトから取り除く。

@@ -12,7 +12,6 @@ const temporary = mkdtempSync(join(tmpdir(), 'kotoba-native-'));
 const env = { ...process.env };
 if (!windows) env.XDG_DATA_HOME = join(temporary, 'data');
 if (windows) env.TAURI_WEBVIEW_AUTOMATION = 'true';
-if (windows) env.KOTOBA_TEST_NET_LOG = join(temporary, 'webview-netlog.json');
 const dataRoot = windows ? env.LOCALAPPDATA : env.XDG_DATA_HOME;
 assert(dataRoot);
 const directory = join(dataRoot, 'local.kotoba.desktop');
@@ -36,7 +35,6 @@ let applicationProcess;
 let applicationLog = '';
 let windowsDebugPolicyCreated = false;
 let windowsNetworkObservationStarted = false;
-const networkOrigins = new Set();
 
 function windowsNetworkObservation(mode) {
   execFileSync('pwsh.exe', ['-NoProfile', '-NonInteractive', '-File', 'scripts/windows-test-network.ps1', '-Mode', mode, '-StateDirectory', temporary, '-Destination', artifacts], { env, stdio: 'inherit', timeout: 30000 });
@@ -157,14 +155,6 @@ async function closeSession() {
       applicationLog += 'Stopping the CI application process after its session.\n';
       stopWindowsProcess(applicationProcess);
       applicationProcess = undefined;
-      // Temporary diagnosis: retain origins only, never URLs, headers or bodies.
-      if (existsSync(env.KOTOBA_TEST_NET_LOG)) {
-        const raw = readFileSync(env.KOTOBA_TEST_NET_LOG, 'utf8');
-        for (const match of raw.matchAll(/"url"\s*:\s*("(?:[^"\\]|\\.)*")/g)) {
-          try { networkOrigins.add(new URL(JSON.parse(match[1])).origin); } catch {}
-        }
-        writeFileSync(join(artifacts, 'network-origins.json'), JSON.stringify([...networkOrigins].sort(), null, 2));
-      }
     }
   }
 }

@@ -74,6 +74,8 @@ npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis
 
 Windows用設定は`tauri.windows.conf.json`で自動適用される。Fixed Versionの更新もアプリと一緒に手動配布する。更新時は公式配布物の版・ハッシュを変更し、既存の`src-tauri/runtime/webview2`を別名へ移してから取得スクリプトを再実行する。既存ディレクトリは自動上書きしない。署名用の資格情報はソースへ含めない。
 
+0.2.3では同梱WebView2のバックグラウンドHTTP/HTTPS通信に対応し、アプリが所有するループバックの接続先で要求を読み取らずに閉じる。OSのプロキシ設定やファイアウォールは書き換えない。端末内で配信する画面とIPCは維持する。詳しい経緯と検証範囲は[学習画面の検証レポート](study-stability-report.md#windowsランタイムの通信)を参照。
+
 ## Ubuntu 24.04 LTS・x86_64（暫定）
 
 ```sh
