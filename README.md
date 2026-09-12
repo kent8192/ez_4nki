@@ -10,16 +10,18 @@ CSVの列を問題・答え・解説・選択肢に割り当て、FSRSで復習�
 
 0.2.2では、再取り込みで「IDを使わない」が戻る問題、自動選択で列の役割が重複する問題、途中の画面更新で取り込み先が変わる問題、再プレビュー失敗後も古い候補が残る問題を修正した。複数デッキと1,024通りの取り込み手順を含む[照合の検証レポート](docs/identity-coverage-report.md)を参照。
 
+0.2.3では、学習中に期限が来た復習カードが問題へ割り込む不具合を修正した。表示中の問題・選択肢・答え・解説を保持し、評価後に次のカードを選ぶ。保存形式とFSRSの計算は変更していない。
+
 ## ダウンロードして使う
 
 [最新版の配布ページ](https://github.com/kent8192/ez_4nki/releases/latest)から、利用する端末のファイルをダウンロードする。Node.js・Rustやソースのビルドは不要。
 
 | 端末 | ファイル |
 | --- | --- |
-| Windows 11・Intel/AMD x64 | `Kotoba_0.2.2_x64-setup.exe` |
-| Mac・Apple Silicon | `Kotoba_0.2.2_arm64.dmg` |
-| Mac・Intel | `Kotoba_0.2.2_x64.dmg` |
-| Ubuntu 24.04系・x86_64 | `Kotoba_0.2.2_amd64.deb` |
+| Windows 11・Intel/AMD x64 | `Kotoba_0.2.3_x64-setup.exe` |
+| Mac・Apple Silicon | `Kotoba_0.2.3_arm64.dmg` |
+| Mac・Intel | `Kotoba_0.2.3_x64.dmg` |
+| Ubuntu 24.04系・x86_64 | `Kotoba_0.2.3_amd64.deb` |
 
 WindowsはEXEを実行、MacはDMG内のKotobaをApplicationsへコピーする。Ubuntuの導入、初回起動、手動更新、署名の状態は[インストール手順](docs/install.md)を参照。
 
@@ -41,7 +43,7 @@ macOSでのAPP・DMG作成:
 npm run package:macos
 ```
 
-成果物は `artifacts/Kotoba.app` と `artifacts/Kotoba_0.2.2_arm64.dmg`（Intelでビルドした場合は`x64`）。WindowsとUbuntuの手順、保存先、復旧方法は[運用とビルド](docs/operations.md)を参照。
+成果物は `artifacts/Kotoba.app` と `artifacts/Kotoba_0.2.3_arm64.dmg`（Intelでビルドした場合は`x64`）。WindowsとUbuntuの手順、保存先、復旧方法は[運用とビルド](docs/operations.md)を参照。
 
 ## 検証
 

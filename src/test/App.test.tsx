@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import App from '../App';
 import type { Mapping, Preview, Transport, View } from '../types';
 
@@ -88,7 +88,8 @@ function harness() {
         return null as T;
       }
       if (request.type === 'grade') {
-        view.queues.deck.cardIds = [];
+        view.queues.deck.cardIds = view.queues.deck.cardIds.filter((id) => id !== request.cardId);
+        view.revision += 1;
         view.canUndo = true;
         if (request.rating === 1) {
           const now = Math.floor(Date.now() / 1000);
@@ -598,6 +599,261 @@ describe('deck deletion', () => {
 });
 
 describe('learning flow', () => {
+  it.each([false, true])(
+    'keeps the active question when a repetition becomes ready (answer revealed: %s)',
+    async (reveal) => {
+      const { transport, view, requests } = harness();
+      view.cards.push({
+        ...structuredClone(view.cards[0]),
+        id: 'repetition',
+        question: '復習待ちの問題',
+        answer: '復習待ちの答え',
+      });
+      const user = userEvent.setup();
+      render(<App transport={transport} />);
+      await user.click(await screen.findByRole('button', { name: '学習をはじめる' }));
+      if (reveal) await user.keyboard(' ');
+
+      // Becoming due changes the queue without changing the library revision.
+      view.queues.deck.cardIds = ['repetition', 'card'];
+      fireEvent.focus(window);
+      await screen.findByText('残り 2枚');
+
+      expect(
+        screen.getByRole('heading', { name: '<img src=x onerror=alert(1)>' }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole('heading', { name: '復習待ちの問題' })).not.toBeInTheDocument();
+      if (reveal) {
+        expect(screen.getByText('答えの本文')).toBeInTheDocument();
+        await user.keyboard('3');
+        expect(requests.filter((r) => r.type === 'grade')).toEqual([
+          { type: 'grade', cardId: 'card', rating: 3 },
+        ]);
+        expect(await screen.findByRole('heading', { name: '復習待ちの問題' })).toBeInTheDocument();
+        expect(screen.queryByText('復習待ちの答え')).not.toBeInTheDocument();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'keeps the question, choices and answer across the one-minute timer (revealed: %s)',
+    async (reveal) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-09-12T03:00:00Z'));
+      const { transport, view, requests } = harness();
+      view.cards[0].choices = [{ label: '候補', text: '選択肢の本文' }];
+      const due = Date.now() / 1000 + 60;
+      view.cards.push({
+        ...structuredClone(view.cards[0]),
+        id: 'repetition',
+        question: '復習待ちの問題',
+        answer: '復習待ちの答え',
+        schedule: { stability: 1, difficulty: 5, lastReview: due - 60, due, reps: 1, lapses: 0 },
+      });
+      const command = transport.command;
+      transport.command = async (request) => {
+        if (request.type === 'view' && Date.now() / 1000 >= due) {
+          view.queues.deck.cardIds = [
+            'repetition',
+            ...view.queues.deck.cardIds.filter((id) => id !== 'repetition'),
+          ];
+        }
+        return command(request);
+      };
+      let unmount = () => {};
+      try {
+        await act(async () => {
+          ({ unmount } = render(<App transport={transport} />));
+        });
+        fireEvent.click(screen.getByRole('button', { name: '学習をはじめる' }));
+        if (reveal) fireEvent.keyDown(document.body, { code: 'Space', key: ' ' });
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(60000);
+        });
+        expect(screen.getByText('残り 2枚')).toBeInTheDocument();
+        expect(requests.filter((r) => r.type === 'view').length).toBeGreaterThan(1);
+        expect(
+          screen.getByRole('heading', { name: '<img src=x onerror=alert(1)>' }),
+        ).toBeInTheDocument();
+        expect(screen.getByRole('list', { name: '選択肢' })).toHaveTextContent('選択肢の本文');
+        expect(!!screen.queryByText('答えの本文')).toBe(reveal);
+        expect(!!screen.queryByText('解説の本文')).toBe(reveal);
+        if (!reveal) fireEvent.keyDown(document.body, { code: 'Space', key: ' ' });
+        await act(async () => {
+          fireEvent.keyDown(document.body, { key: '3' });
+        });
+        expect(requests.filter((r) => r.type === 'grade')).toEqual([
+          { type: 'grade', cardId: 'card', rating: 3 },
+        ]);
+        expect(screen.getByRole('heading', { name: '復習待ちの問題' })).toBeInTheDocument();
+        expect(screen.queryByText('復習待ちの答え')).not.toBeInTheDocument();
+      } finally {
+        unmount();
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('automatically resumes an empty study screen when the forgotten card becomes due', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-12T03:00:00Z'));
+    const { transport, view } = harness();
+    const command = transport.command;
+    transport.command = async (request) => {
+      const due = view.cards[0].schedule.due;
+      if (request.type === 'view' && due && due <= Date.now() / 1000)
+        view.queues.deck.cardIds = ['card'];
+      return command(request);
+    };
+    let unmount = () => {};
+    try {
+      await act(async () => {
+        ({ unmount } = render(<App transport={transport} />));
+      });
+      fireEvent.click(screen.getByRole('button', { name: '学習をはじめる' }));
+      fireEvent.keyDown(document.body, { code: 'Space', key: ' ' });
+      await act(async () => {
+        fireEvent.keyDown(document.body, { key: '1' });
+      });
+      expect(screen.getByText('少し待って、もう一度')).toBeInTheDocument();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(60000);
+      });
+      expect(
+        screen.getByRole('heading', { name: '<img src=x onerror=alert(1)>' }),
+      ).toBeInTheDocument();
+      expect(screen.queryByText('答えの本文')).not.toBeInTheDocument();
+    } finally {
+      unmount();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the revealed card when saving its grade fails', async () => {
+    const { transport } = harness();
+    const command = transport.command;
+    transport.command = async (request) => {
+      if (request.type === 'grade') throw new Error('保存できません');
+      return command(request);
+    };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: '学習をはじめる' }));
+    await user.keyboard(' ');
+    await user.keyboard('3');
+    expect((await screen.findAllByText('保存できません')).length).toBeGreaterThan(0);
+    expect(screen.getByText('答えの本文')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /普通/ })).toBeEnabled();
+  });
+
+  it('does not reselect an already graded card if refreshing fails or a stale response arrives', async () => {
+    const { transport, requests } = harness();
+    const command = transport.command;
+    let failRefresh = false;
+    let deliverStale: (() => void) | undefined;
+    let holdView = false;
+    transport.command = async <T,>(request: Record<string, unknown>): Promise<T> => {
+      if (request.type === 'view' && failRefresh) throw new Error('画面の更新に失敗');
+      const result = await command<T>(request);
+      if (request.type === 'view' && holdView) {
+        holdView = false;
+        return new Promise<T>((resolve) => {
+          deliverStale = () => resolve(result);
+        });
+      }
+      if (request.type === 'grade') failRefresh = true;
+      return result;
+    };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: '学習をはじめる' }));
+    holdView = true;
+    fireEvent.focus(window);
+    await waitFor(() => expect(deliverStale).toBeDefined());
+    await user.keyboard(' ');
+    await user.keyboard('3');
+    expect((await screen.findAllByText('画面の更新に失敗')).length).toBeGreaterThan(0);
+    await act(async () => {
+      deliverStale!();
+    });
+    expect(screen.getByText('次の問題を準備しています。')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: '<img src=x onerror=alert(1)>' }),
+    ).not.toBeInTheDocument();
+    await user.keyboard(' ');
+    await user.keyboard('3');
+    expect(requests.filter((r) => r.type === 'grade')).toHaveLength(1);
+    failRefresh = false;
+    fireEvent.focus(window);
+    expect(await screen.findByText('今日の学習が終わりました')).toBeInTheDocument();
+  });
+
+  it('reselects after undo but keeps the current card on an unsuccessful undo', async () => {
+    const { transport, view } = harness();
+    view.cards.push({
+      ...structuredClone(view.cards[0]),
+      id: 'second',
+      question: '次の問題',
+      answer: '次の答え',
+    });
+    view.queues.deck.cardIds.push('second');
+    let failUndo = true;
+    const command = transport.command;
+    transport.command = async (request) => {
+      if (request.type === 'undo') {
+        if (failUndo) throw new Error('取り消しに失敗');
+        view.revision += 1;
+        view.queues.deck.cardIds = ['card', 'second'];
+        view.canUndo = false;
+      }
+      return command(request);
+    };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: '学習をはじめる' }));
+    await user.keyboard(' ');
+    await user.keyboard('3');
+    expect(await screen.findByRole('heading', { name: '次の問題' })).toBeInTheDocument();
+    await user.keyboard(' ');
+    await user.click(screen.getByRole('button', { name: '直前の自己評価を取り消す' }));
+    expect((await screen.findAllByText('取り消しに失敗')).length).toBeGreaterThan(0);
+    expect(screen.getByText('次の答え')).toBeInTheDocument();
+    failUndo = false;
+    await user.click(screen.getByRole('button', { name: '直前の自己評価を取り消す' }));
+    expect(
+      await screen.findByRole('heading', { name: '<img src=x onerror=alert(1)>' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('答えの本文')).not.toBeInTheDocument();
+  });
+
+  it('selects the latest queue on reopening without carrying an old question into another deck', async () => {
+    const { transport, view } = harness();
+    view.decks.push({ ...view.decks[0], id: 'other', name: '別の単語帳' });
+    view.cards.push({
+      ...structuredClone(view.cards[0]),
+      deckId: 'other',
+      id: 'other-card',
+      question: '別の問題',
+    });
+    view.queues.other = { ...view.queues.deck, cardIds: ['other-card'] };
+    const user = userEvent.setup();
+    render(<App transport={transport} />);
+    await user.click(await screen.findByRole('button', { name: '学習をはじめる' }));
+    await user.keyboard(' ');
+    await user.click(screen.getByRole('button', { name: '閉じる' }));
+    await user.click(screen.getByRole('button', { name: '別の単語帳 1' }));
+    await user.click(screen.getByRole('button', { name: '学習をはじめる' }));
+    expect(screen.getByRole('heading', { name: '別の問題' })).toBeInTheDocument();
+    expect(screen.queryByText('答えの本文')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '閉じる' }));
+    await user.click(screen.getByRole('button', { name: '基礎の単語 1' }));
+    await user.click(screen.getByRole('button', { name: '学習をはじめる' }));
+    expect(
+      screen.getByRole('heading', { name: '<img src=x onerror=alert(1)>' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('答えの本文')).not.toBeInTheDocument();
+  });
+
   it('shows a single-column choice block before revealing the answer as plain text', async () => {
     const { transport, requests, view } = harness();
     view.cards[0].choices = [{ label: '選択肢', text: 'A. first\nB. <img src=x>' }];

@@ -179,6 +179,31 @@ try {
   await bodyContains('What is 2 + 3?');
   assert.equal((await elements('.answer-area')).length, 0);
   await clickButton('答えを見る');
+  await clickButton('忘れた');
+  await bodyContains('Second question');
+  await clickButton('答えを見る');
+  // Exercise the real FSRS -> one-minute repetition -> automatic view refresh
+  // path in the installed app. The newly ready card must not interrupt B.
+  const repetitionDeadline = Date.now() + 95000;
+  while (!(await text(await element('.study-meta'))).includes('残り 2枚')) {
+    assert(Date.now() < repetitionDeadline, 'The one-minute repetition did not become ready.');
+    assert.equal(await text(await element('.flashcard h2')), 'Second question');
+    assert.equal(await text(await element('.answer-text')), 'Second answer');
+    await delay(1000);
+  }
+  assert.equal(await text(await element('.flashcard h2')), 'Second question');
+  assert.equal(await text(await element('.answer-text')), 'Second answer');
+  await screenshot('ready-repetition-keeps-active-card');
+  await clickButton('普通');
+  await bodyContains('What is 2 + 3?');
+  assert.equal((await elements('.answer-area')).length, 0);
+  // Undo B, then A, so the original persistence checks remain applicable.
+  await clickButton('直前の自己評価を取り消す');
+  await bodyContains('残り 2枚');
+  await clickButton('直前の自己評価を取り消す');
+  await bodyContains('What is 2 + 3?');
+  await until(async () => request('GET', route(`/element/${(await element('.reveal-button'))[elementKey]}/enabled`)), 'answer control after undo');
+  await clickButton('答えを見る');
   await clickButton('普通');
   await bodyContains('Second question');
   await click(await element('button[aria-label="閉じる"]'));
@@ -201,7 +226,7 @@ try {
   await screenshot('restart');
   await closeSession();
   fixture('check');
-  console.log(`Installed native UI passed on ${process.platform}: reveal, literal text, grade, undo, bonus, forecast, forgetting curve, restart persistence.`);
+  console.log(`Installed native UI passed on ${process.platform}: reveal, literal text, grade, undo, active card retained across a ready repetition, bonus, forecast, forgetting curve, restart persistence.`);
 } catch (error) {
   if (windows && applicationProcess?.pid) {
     try {

@@ -203,6 +203,11 @@ export default function App({ transport }: { transport: Transport }) {
     choiceSeparator: null,
   });
   const [preview, setPreview] = useState<Preview | null>(null);
+  const [studyCard, setStudyCard] = useState<{
+    deckId: string;
+    id: string | null;
+    minimumRevision: number;
+  } | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [newBonus, setNewBonus] = useState(10);
   const [reviewBonus, setReviewBonus] = useState(0);
@@ -228,7 +233,8 @@ export default function App({ transport }: { transport: Transport }) {
   const deck = view?.decks.find((d) => d.id === selected) ?? view?.decks[0];
   const cards = view?.cards.filter((c) => c.deckId === deck?.id) ?? [];
   const queue = deck ? view?.queues[deck.id] : undefined;
-  const currentCard = cards.find((c) => c.id === queue?.cardIds[0]);
+  const currentCard = cards.find((c) => c.id === studyCard?.id);
+  const studyRefreshing = !!(view && studyCard && view.revision < studyCard.minimumRevision);
   const nextRepetition = cards
     .map((c) => c.schedule)
     .filter((s) => s.due && s.lastReview && s.due > Date.now() / 1000 && s.due - s.lastReview <= 60)
@@ -284,6 +290,22 @@ export default function App({ transport }: { transport: Transport }) {
     }
   }, [view?.settings.dayStartHour, view?.settings.timezone]);
   useEffect(() => {
+    setStudyCard((previous) => {
+      if (modal !== 'study' || !view || !deck) return null;
+      if (previous?.deckId === deck.id) {
+        // A queue refresh may put a newly due repetition ahead of this card.
+        // Keep the displayed question until an explicit grade/undo succeeds.
+        if (cards.some((c) => c.id === previous.id)) return previous;
+        // Do not select from a snapshot taken before a successful mutation,
+        // including when its follow-up refresh fails or responses arrive late.
+        if (view.revision < previous.minimumRevision) return previous;
+      }
+      const id = queue?.cardIds[0] ?? null;
+      if (previous?.deckId === deck.id && previous.id === id) return previous;
+      return { deckId: deck.id, id, minimumRevision: view.revision };
+    });
+  }, [modal, view, deck?.id, studyCard]);
+  useEffect(() => {
     setRevealed(false);
   }, [currentCard?.id]);
 
@@ -324,14 +346,15 @@ export default function App({ transport }: { transport: Transport }) {
     });
   const grade = useCallback(
     (rating: number) => {
-      if (!currentCard || !revealed || busyRef.current) return;
+      if (!currentCard || !view || !revealed || busyRef.current) return;
       void run(async () => {
         await transport.command({ type: 'grade', cardId: currentCard.id, rating });
         setRevealed(false);
+        setStudyCard({ deckId: currentCard.deckId, id: null, minimumRevision: view.revision + 1 });
         await refresh();
       });
     },
-    [currentCard?.id, revealed, transport, run, refresh],
+    [currentCard?.id, view?.revision, revealed, transport, run, refresh],
   );
   useEffect(() => {
     if (modal !== 'study') return;
@@ -1087,7 +1110,7 @@ export default function App({ transport }: { transport: Transport }) {
                     <br />
                     端末内のデータ保護は、OSの暗号化とログイン保護に委ねています。
                   </p>
-                  <p className="footnote">Kotoba 0.2.2 · FSRS-6 · 更新はインストーラで手動適用</p>
+                  <p className="footnote">Kotoba 0.2.3 · FSRS-6 · 更新はインストーラで手動適用</p>
                 </div>
               </section>
             </>
@@ -1530,6 +1553,10 @@ export default function App({ transport }: { transport: Transport }) {
                 </button>
               )}
             </>
+          ) : studyRefreshing ? (
+            <div className="study-done" role="status">
+              次の問題を準備しています。
+            </div>
           ) : (
             <div className="study-done">
               <span className="done-icon">
@@ -1549,8 +1576,16 @@ export default function App({ transport }: { transport: Transport }) {
           <div className="study-footer">
             <button
               className="quiet"
-              disabled={!view?.canUndo || busy}
-              onClick={() => void mutate({ type: 'undo' }, undefined, true)}
+              disabled={!view?.canUndo || busy || studyRefreshing}
+              onClick={() =>
+                void run(async () => {
+                  if (!view || !deck) return;
+                  await transport.command({ type: 'undo' });
+                  setRevealed(false);
+                  setStudyCard({ deckId: deck.id, id: null, minimumRevision: view.revision + 1 });
+                  await refresh();
+                })
+              }
             >
               <RotateCcw size={15} />
               直前の自己評価を取り消す

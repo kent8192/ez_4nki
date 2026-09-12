@@ -2693,7 +2693,7 @@ dependencies = [
 
 [[package]]
 name = "kotoba-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "age",
  "chrono",
@@ -2713,7 +2713,7 @@ dependencies = [
 
 [[package]]
 name = "kotoba-desktop"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "chrono",
  "fsrs",
